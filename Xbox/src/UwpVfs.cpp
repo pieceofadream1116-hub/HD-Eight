@@ -4,20 +4,36 @@
 // its UWP version is written in C++/CX. These do the same job with _wfopen and std::filesystem, which work on the
 // Xbox's USB drives thanks to the broadFileSystemAccess capability (the same way HD Eight opens its games).
 
-#define NOMINMAX
-#include <windows.h>
-
-#include <vfs/vfs.h>
-#include <vfs/vfs_implementation.h>
-
 #include <io.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <string>
 #include <system_error>
+
+// The libretro-common headers are left out on purpose: they rename the C file functions (fread...) for the core.
+// These match libretro.h and vfs.h.
+#define RETRO_VFS_FILE_ACCESS_READ (1 << 0)
+#define RETRO_VFS_FILE_ACCESS_WRITE (1 << 1)
+#define RETRO_VFS_FILE_ACCESS_READ_WRITE (RETRO_VFS_FILE_ACCESS_READ | RETRO_VFS_FILE_ACCESS_WRITE)
+#define RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING (1 << 2)
+#define RETRO_VFS_SEEK_POSITION_START 0
+#define RETRO_VFS_SEEK_POSITION_CURRENT 1
+#define RETRO_VFS_SEEK_POSITION_END 2
+#define RETRO_VFS_STAT_IS_VALID (1 << 0)
+#define RETRO_VFS_STAT_IS_DIRECTORY (1 << 1)
+
+// The core only ever holds pointers to these, so the app can lay them out its own way
+struct libretro_vfs_implementation_file
+{
+	FILE* fp = nullptr;
+	unsigned hints = 0;
+	int64_t size = 0;
+	char* orig_path = nullptr;
+};
 
 namespace fs = std::filesystem;
 
@@ -60,14 +76,9 @@ libretro_vfs_implementation_file* retro_vfs_file_open_impl(const char* path, uns
 	if(!fp) {
 		return nullptr;
 	}
-	auto* stream = static_cast<libretro_vfs_implementation_file*>(std::calloc(1, sizeof(libretro_vfs_implementation_file)));
-	if(!stream) {
-		std::fclose(fp);
-		return nullptr;
-	}
+	auto* stream = new libretro_vfs_implementation_file();
 	stream->fp = fp;
 	stream->hints = hints;
-	stream->fd = -1;
 	stream->orig_path = _strdup(path);
 	_fseeki64(fp, 0, SEEK_END);
 	stream->size = _ftelli64(fp);
@@ -84,8 +95,7 @@ int retro_vfs_file_close_impl(libretro_vfs_implementation_file* stream)
 		std::fclose(stream->fp);
 	}
 	std::free(stream->orig_path);
-	std::free(stream->buf);
-	std::free(stream);
+	delete stream;
 	return 0;
 }
 

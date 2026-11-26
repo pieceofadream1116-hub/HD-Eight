@@ -20,6 +20,7 @@ class Emulator;
 class XboxRenderer;
 class XboxAudio;
 class XboxInput;
+class Covers;
 
 class App
 {
@@ -81,6 +82,8 @@ private:
 	std::unique_ptr<XboxRenderer> _video;
 	std::unique_ptr<XboxAudio> _audio;
 	std::unique_ptr<XboxInput> _input;
+	std::unique_ptr<Covers> _covers;
+	size_t _focusedGame = 0;
 
 	std::filesystem::path _profile;
 	std::filesystem::path _resFolder;

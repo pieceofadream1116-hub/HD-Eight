@@ -1,5 +1,6 @@
 #include "App.h"
 
+#include "Covers.h"
 #include "UwpPlatform.h"
 #include "XboxAudio.h"
 #include "XboxInput.h"
@@ -353,6 +354,7 @@ bool App::Init()
 	}
 	_games = ScanGames(folders);
 	uwp::Log("Games found: " + std::to_string(_games.size()));
+	_covers = std::make_unique<Covers>(_profile / "Covers");
 	return true;
 }
 
@@ -551,6 +553,7 @@ void App::Shutdown()
 		ImGui_ImplSDL3_Shutdown();
 		ImGui::DestroyContext();
 	}
+	_covers.reset();
 	if(_gameTexture) {
 		SDL_DestroyTexture(_gameTexture);
 		_gameTexture = nullptr;
@@ -915,10 +918,15 @@ void App::DrawLibrary()
 		ImGui::TextWrapped("or press A on \"Choose games folder\".");
 	} else {
 		ImGui::Text("%d games. Press A to play.", (int)_games.size());
-		ImGui::BeginChild("games", ImVec2(0, 0), ImGuiChildFlags_NavFlattened);
+		const float listWidth = ImGui::GetContentRegionAvail().x * 0.5f;
+		ImGui::BeginChild("games", ImVec2(listWidth, 0), ImGuiChildFlags_NavFlattened);
 		for(size_t i = 0; i < _games.size(); i++) {
 			ImGui::PushID((int)i);
-			if(ImGui::Selectable(_games[i].title.c_str(), false)) {
+			bool chosen = ImGui::Selectable(_games[i].title.c_str(), false);
+			if(ImGui::IsItemFocused()) {
+				_focusedGame = i;
+			}
+			if(chosen) {
 				GameEntry game = _games[i];
 				ImGui::PopID();
 				ImGui::EndChild();
@@ -927,6 +935,32 @@ void App::DrawLibrary()
 				return;
 			}
 			ImGui::PopID();
+		}
+		ImGui::EndChild();
+
+		// Box art and description of the highlighted game
+		ImGui::SameLine();
+		ImGui::BeginChild("details", ImVec2(0, 0), ImGuiChildFlags_None, ImGuiWindowFlags_NoNav);
+		if(_covers && _focusedGame < _games.size()) {
+			const Covers::Info& info = _covers->Get(_sdlRenderer, _games[_focusedGame]);
+			ImVec2 avail = ImGui::GetContentRegionAvail();
+			if(info.texture) {
+				float scale = std::min(avail.x / info.width, avail.y * 0.6f / info.height);
+				float w = info.width * scale;
+				ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (avail.x - w) / 2);
+				ImGui::Image((ImTextureID)(intptr_t)info.texture, ImVec2(w, info.height * scale));
+			} else if(!info.coverDone) {
+				ImGui::TextDisabled("Looking for the box art...");
+			} else {
+				ImGui::TextDisabled("No box art found");
+			}
+			ImGui::SetWindowFontScale(0.75f);
+			if(!info.descriptionDone) {
+				ImGui::TextDisabled("Looking for a description...");
+			} else if(!info.description.empty()) {
+				ImGui::TextWrapped("%s", info.description.c_str());
+			}
+			ImGui::SetWindowFontScale(1.0f);
 		}
 		ImGui::EndChild();
 	}

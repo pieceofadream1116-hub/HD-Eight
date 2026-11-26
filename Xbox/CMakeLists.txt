@@ -64,6 +64,8 @@ add_executable(HDEight WIN32
     src/XboxAudio.h
     src/XboxInput.cpp
     src/XboxInput.h
+    src/Covers.cpp
+    src/Covers.h
     src/Library.cpp
     src/Library.h
     src/Settings.cpp

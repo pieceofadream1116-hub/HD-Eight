@@ -1,0 +1,62 @@
+#pragma once
+// Box art and a short description for the highlighted game, the way the Saturn app does it: fetched on demand,
+// with no account or key, from the Libretro thumbnails library (box art) and Wikipedia (description), then kept
+// in <profile>\Covers so each game is only downloaded once. Downloads run on a thread of their own.
+
+#include "Library.h"
+
+#include <SDL3/SDL.h>
+
+#include <condition_variable>
+#include <cstdint>
+#include <deque>
+#include <filesystem>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_map>
+#include <vector>
+
+class Covers
+{
+public:
+	struct Info
+	{
+		SDL_Texture* texture = nullptr;
+		int width = 0;
+		int height = 0;
+		std::string description;
+		bool coverDone = false;        // finished looking (texture may still be null: no box art found)
+		bool descriptionDone = false;
+	};
+
+	explicit Covers(std::filesystem::path folder);
+	~Covers();
+
+	/// UI thread: the box art and description for a game, starting the download the first time it is asked for.
+	const Info& Get(SDL_Renderer* renderer, const GameEntry& game);
+
+private:
+	struct Result
+	{
+		std::vector<uint8_t> rgba;
+		int width = 0;
+		int height = 0;
+		std::string description;
+		bool coverDone = false;
+		bool descriptionDone = false;
+	};
+
+	void Worker();
+	void Fetch(const GameEntry& game);
+
+	std::filesystem::path _folder;
+	std::unordered_map<std::string, Info> _info;      // UI thread only, by game title
+
+	std::mutex _lock;
+	std::condition_variable _wake;
+	std::deque<GameEntry> _queue;
+	std::unordered_map<std::string, Result> _results; // filled by the worker, picked up by Get()
+	bool _stop = false;
+	std::thread _thread;
+};

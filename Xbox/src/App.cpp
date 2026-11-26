@@ -76,6 +76,28 @@ constexpr uint32_t kDefaultPalette[64] = {
 	0xFFE4E594, 0xFFCFEF96, 0xFFBDF4AB, 0xFFB3F3CC, 0xFFB5EBF2, 0xFFB8B8B8, 0xFF000000, 0xFF000000,
 };
 
+const char* XboxButtonName(int button)
+{
+	switch(button) {
+		case pad::A: return "A";
+		case pad::B: return "B";
+		case pad::X: return "X";
+		case pad::Y: return "Y";
+		case pad::Back: return "View";
+		case pad::Start: return "Menu";
+		case pad::LeftStick: return "Left stick click";
+		case pad::LeftShoulder: return "LB";
+		case pad::RightShoulder: return "RB";
+		case pad::LeftTrigger: return "LT";
+		case pad::RightTrigger: return "RT";
+		default: return "?";
+	}
+}
+
+// Buttons a NES button can be moved to (the right stick click opens the menu, the D-pad moves)
+constexpr pad::Button kAssignable[] = {pad::A, pad::B, pad::X, pad::Y, pad::LeftShoulder, pad::RightShoulder,
+	pad::LeftTrigger, pad::RightTrigger, pad::Back, pad::Start, pad::LeftStick};
+
 // The 16 letters Game Genie codes are made of
 constexpr const char* kGenieLetters = "APZLGITYEOXUKSVN";
 
@@ -109,15 +131,16 @@ VideoFilterType FilterFor(PictureStyle style)
 }
 
 // Xbox A is the NES B button and Xbox B the NES A button, like the real pad's layout (B left of A)
-KeyMapping PadMapping(int player, bool useStick)
+// The player's button choices (Controller page); directions are always the D-pad (and the left stick)
+// With turbo switched on for A or B, that button itself fires rapidly (the separate turbo buttons are in TurboMapping)
+KeyMapping PadMapping(int player, bool useStick, const AppSettings& s)
 {
+	const int* buttons = s.buttons;
 	KeyMapping m{};
-	m.B = pad::Code(player, pad::A);
-	m.A = pad::Code(player, pad::B);
-	m.TurboB = pad::Code(player, pad::X);
-	m.TurboA = pad::Code(player, pad::Y);
-	m.Select = pad::Code(player, pad::Back);
-	m.Start = pad::Code(player, pad::Start);
+	(s.turboA ? m.TurboA : m.A) = pad::Code(player, (pad::Button)buttons[0]);
+	(s.turboB ? m.TurboB : m.B) = pad::Code(player, (pad::Button)buttons[1]);
+	m.Select = pad::Code(player, (pad::Button)buttons[4]);
+	m.Start = pad::Code(player, (pad::Button)buttons[5]);
 	if(useStick) {
 		m.Up = pad::Code(player, pad::StickUp);
 		m.Down = pad::Code(player, pad::StickDown);
@@ -129,6 +152,15 @@ KeyMapping PadMapping(int player, bool useStick)
 		m.Left = pad::Code(player, pad::Left);
 		m.Right = pad::Code(player, pad::Right);
 	}
+	return m;
+}
+
+// The separate Turbo A / Turbo B buttons, in a mapping of their own so they work alongside turbo switched on for A/B
+KeyMapping TurboMapping(int player, const AppSettings& s)
+{
+	KeyMapping m{};
+	m.TurboA = pad::Code(player, (pad::Button)s.buttons[2]);
+	m.TurboB = pad::Code(player, (pad::Button)s.buttons[3]);
 	return m;
 }
 
@@ -353,11 +385,15 @@ void App::ApplyMesenSettings()
 
 	NesConfig nes = s->GetNesConfig();
 	nes.Port1.Type = ControllerType::NesController;
-	nes.Port1.Keys.Mapping1 = PadMapping(0, false);
-	nes.Port1.Keys.Mapping2 = PadMapping(0, true);
+	nes.Port1.Keys.Mapping1 = PadMapping(0, false, _settings);
+	nes.Port1.Keys.Mapping2 = PadMapping(0, true, _settings);
+	nes.Port1.Keys.Mapping3 = TurboMapping(0, _settings);
+	nes.Port1.Keys.TurboSpeed = 2; // Mesen's usual turbo speed
 	nes.Port2.Type = ControllerType::NesController;
-	nes.Port2.Keys.Mapping1 = PadMapping(1, false);
-	nes.Port2.Keys.Mapping2 = PadMapping(1, true);
+	nes.Port2.Keys.Mapping1 = PadMapping(1, false, _settings);
+	nes.Port2.Keys.Mapping2 = PadMapping(1, true, _settings);
+	nes.Port2.Keys.Mapping3 = TurboMapping(1, _settings);
+	nes.Port2.Keys.TurboSpeed = 2;
 	nes.AutoConfigureInput = true;
 	nes.EnableHdPacks = _settings.hdPacks;
 	nes.RemoveSpriteLimit = _settings.noFlicker;
@@ -918,12 +954,13 @@ void App::DrawMenu()
 				_focusNext = true;
 			}
 			break;
+		case MenuPage::Controller: DrawController(); break;
 		case MenuPage::Cheats: DrawCheats(); break;
 		case MenuPage::AddCode: DrawAddCode(); break;
 	}
 	ImGui::End();
 
-	if(BackPressed()) {
+	if(_capturing < 0 && BackPressed()) {
 		if(_page == MenuPage::Main) {
 			CloseMenu();
 		} else if(_page == MenuPage::AddCode) {
@@ -966,6 +1003,10 @@ void App::DrawMenuMain()
 	}
 	if(BigButton("Sound and text size")) {
 		_page = MenuPage::Sound;
+		_focusNext = true;
+	}
+	if(BigButton("Controller buttons")) {
+		_page = MenuPage::Controller;
 		_focusNext = true;
 	}
 	if(BigButton("Reset game")) {
@@ -1247,4 +1288,73 @@ void App::DrawInfo()
 	}
 	ImGui::SetWindowFontScale(1.0f);
 	ImGui::End();
+}
+
+// Controller page: pick a NES button, then press the Xbox button it should be on
+void App::DrawController()
+{
+	Title("Controller buttons");
+	uint64_t held = _input->AnyPadButtons();
+
+	if(_capturing >= 0) {
+		ImGui::TextWrapped("Press the Xbox button you want for NES %s", kNesButtonNames[_capturing]);
+		ImGui::TextDisabled("(A, B, X, Y, LB, RB, LT, RT, View, Menu or a left stick click)");
+		if(!_captureReleased) {
+			// Wait until the button that opened this is let go
+			_captureReleased = held == 0;
+			return;
+		}
+		for(pad::Button button : kAssignable) {
+			if((held >> button) & 1) {
+				_settings.buttons[_capturing] = button;
+				_settings.Save();
+				ApplyMesenSettings();
+				Toast(std::string("NES ") + kNesButtonNames[_capturing] + " is now Xbox " + XboxButtonName(button));
+				_capturing = -1;
+				_focusNext = true;
+				_ignoreUntilReleased = true;
+				break;
+			}
+		}
+		return;
+	}
+	if(_ignoreUntilReleased) {
+		// Do not let the button just pressed also click something on this page
+		if(held != 0) {
+			ImGui::GetIO().ClearInputKeys();
+			return;
+		}
+		_ignoreUntilReleased = false;
+	}
+
+	ImGui::TextWrapped("Pick a NES button, then press the Xbox button you want for it.");
+	for(int i = 0; i < AppSettings::kButtonCount; i++) {
+		std::string label = std::string("NES ") + kNesButtonNames[i] + ":   Xbox " + XboxButtonName(_settings.buttons[i]);
+		ImGui::PushID(i);
+		if(BigButton(label.c_str())) {
+			_capturing = i;
+			_captureReleased = false;
+		}
+		ImGui::PopID();
+	}
+	ImGui::Separator();
+	ImGui::TextUnformatted("Turbo (the button fires by itself while you hold it)");
+	if(ImGui::Checkbox("Turbo on NES A", &_settings.turboA) | ImGui::Checkbox("Turbo on NES B", &_settings.turboB)) {
+		_settings.Save();
+		ApplyMesenSettings();
+	}
+	ImGui::Separator();
+	if(BigButton("Put buttons back the way they were")) {
+		AppSettings defaults;
+		std::copy(std::begin(defaults.buttons), std::end(defaults.buttons), _settings.buttons);
+		_settings.turboA = false;
+		_settings.turboB = false;
+		_settings.Save();
+		ApplyMesenSettings();
+		Toast("Buttons are back to normal");
+	}
+	if(BigButton("Back")) {
+		_page = MenuPage::Main;
+		_focusNext = true;
+	}
 }

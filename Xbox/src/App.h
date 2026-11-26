@@ -31,7 +31,7 @@ public:
 
 private:
 	enum class Screen { Library, Playing };
-	enum class MenuPage { Main, Picture, Cheats, AddCode, Sound };
+	enum class MenuPage { Main, Picture, Cheats, AddCode, Sound, Controller };
 
 	bool Init();
 	void Shutdown();
@@ -61,6 +61,7 @@ private:
 	void DrawPictureOptions();
 	void DrawSoundOptions();
 	void DrawCheats();
+	void DrawController();
 	void DrawAddCode();
 	void DrawToast();
 	bool BackPressed() const;
@@ -92,6 +93,9 @@ private:
 	MenuPage _page = MenuPage::Main;
 	bool _focusNext = true;
 	int _saveSlot = 1;
+	int _capturing = -1;          // NES button waiting for an Xbox button (Controller page)
+	bool _captureReleased = false;
+	bool _ignoreUntilReleased = false;
 	uint64_t _lastPadButtons = 0;
 
 	GameEntry _currentGame;

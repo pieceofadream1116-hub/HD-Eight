@@ -31,6 +31,9 @@ enum class ScreenShape
 
 const char* ScreenShapeName(ScreenShape shape);
 
+/// The NES buttons that can be moved to another Xbox button, in AppSettings::buttons order.
+inline constexpr const char* kNesButtonNames[] = {"A", "B", "Turbo A", "Turbo B", "Select", "Start"};
+
 struct AppSettings
 {
 	std::string gamesFolder;                 // extra folder picked by the player (the profile's Games folder is always scanned)
@@ -40,7 +43,14 @@ struct AppSettings
 	bool hdPacks = true;                     // load HD packs from the HdPacks folder
 	bool noFlicker = true;                   // remove the 8 sprites per line limit
 	int volume = 100;                        // 0-100
-	int uiScale = 100;                       // text size in percent (100 = big, made for a TV)
+	int uiScale = 100;
+
+	/// Xbox button (pad::Button number) for each NES button, in the order of kNesButtonNames.
+	/// Default: Xbox A = NES B and Xbox B = NES A (same layout as the real pad), X/Y = turbo, View = Select, Menu = Start.
+	static constexpr int kButtonCount = 6;
+	int buttons[kButtonCount] = {1, 0, 3, 2, 4, 6};
+	bool turboA = false;   // NES A fires by itself while held
+	bool turboB = false;   // NES B fires by itself while held                       // text size in percent (100 = big, made for a TV)
 
 	void Load(const std::filesystem::path& file);
 	void Save() const;

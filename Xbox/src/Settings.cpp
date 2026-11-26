@@ -79,6 +79,13 @@ void AppSettings::Load(const std::filesystem::path& file)
 			volume = std::clamp(toInt(volume), 0, 100);
 		} else if(key == "uiScale") {
 			uiScale = std::clamp(toInt(uiScale), 60, 200);
+		} else if(key == "turboA") {
+			turboA = toInt(0) != 0;
+		} else if(key == "turboB") {
+			turboB = toInt(0) != 0;
+		} else if(key.rfind("button", 0) == 0 && key.size() == 7 && key[6] >= '0' && key[6] < '0' + kButtonCount) {
+			int i = key[6] - '0';
+			buttons[i] = std::clamp(toInt(buttons[i]), 0, 63);
 		}
 	}
 }
@@ -97,4 +104,9 @@ void AppSettings::Save() const
 	out << "noFlicker=" << (noFlicker ? 1 : 0) << "\n";
 	out << "volume=" << volume << "\n";
 	out << "uiScale=" << uiScale << "\n";
+	out << "turboA=" << (turboA ? 1 : 0) << "\n";
+	out << "turboB=" << (turboB ? 1 : 0) << "\n";
+	for(int i = 0; i < kButtonCount; i++) {
+		out << "button" << i << "=" << buttons[i] << "\n";
+	}
 }

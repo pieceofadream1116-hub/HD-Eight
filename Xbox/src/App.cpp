@@ -37,6 +37,16 @@ std::mutex g_crashLock;
 std::string g_crashText;
 std::atomic<bool> g_crashed = false;
 
+// The lookout: the screen loop stamps where it is; a separate thread notices when it stops moving
+std::atomic<const char*> g_uiMarker = "starting up";
+std::atomic<uint64_t> g_uiBeat = 0;
+std::atomic<const char*> g_workerMarker = "idle";
+
+void Mark(const char* where)
+{
+	g_uiMarker = where;
+}
+
 void OnCrash(const char* where, unsigned long code, unsigned long long offset, bool inImage)
 {
 	const char* what = code == 0xC0000005 ? "bad memory access" : code == 0xC00000FD ? "ran out of stack space" :
@@ -204,6 +214,28 @@ bool App::Init()
 {
 	uwp::InstallCrashLogging();
 	hdeight::SetCrashReporter(OnCrash);
+	std::thread([] {
+		uint64_t lastBeat = g_uiBeat;
+		auto lastChange = std::chrono::steady_clock::now();
+		int reports = 0;
+		while(true) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(250));
+			uint64_t beat = g_uiBeat;
+			auto now = std::chrono::steady_clock::now();
+			if(beat != lastBeat) {
+				lastBeat = beat;
+				lastChange = now;
+				reports = 0;
+				continue;
+			}
+			double stuck = std::chrono::duration<double>(now - lastChange).count();
+			if((reports == 0 && stuck > 3) || (reports == 1 && stuck > 15)) {
+				reports++;
+				uwp::LogUrgent(std::string("[!] The screen has been stuck for ") + std::to_string((int)stuck) +
+					" seconds while " + g_uiMarker.load() + ". Game loader: " + g_workerMarker.load());
+			}
+		}
+	}).detach();
 	SetUpProfile();
 
 	// Keep the Xbox B button from sending the app to the background, and turn on the Xbox controller driver
@@ -368,6 +400,8 @@ int App::Run()
 	}
 
 	while(_running) {
+		g_uiBeat++;
+		Mark("reading Xbox events");
 		SDL_Event event;
 		while(SDL_PollEvent(&event)) {
 			ImGui_ImplSDL3_ProcessEvent(&event);
@@ -387,6 +421,7 @@ int App::Run()
 			}
 		}
 
+		Mark("checking the folder picker");
 		{
 			std::lock_guard lock(_pickLock);
 			if(_pickDone) {
@@ -401,31 +436,40 @@ int App::Run()
 			}
 		}
 
+		Mark("reading the controllers");
 		_input->Poll();
 		if(_loading && _loadDone) {
+			Mark("finishing the game load");
 			FinishLoad();
 		}
 		if(!_loading) {
+			Mark("checking the menu buttons");
 			HandleHotkeys();
 		}
+		Mark("copying the game picture");
 		UploadFrame();
+		Mark("reading Mesen's messages");
 		ForwardMesenLog();
 
 		if(_fontDirty) {
 			ReloadFont();
 		}
+		Mark("starting the menus");
 		ImGui_ImplSDLRenderer3_NewFrame();
 		ImGui_ImplSDL3_NewFrame();
 		ImGui::NewFrame();
 
+		Mark("drawing the game list or menu");
 		if(_screen == Screen::Library && !_loading) {
 			DrawLibrary();
 		} else if(_screen == Screen::Playing && _menuOpen) {
 			DrawMenu();
 		}
+		Mark("drawing the info box");
 		DrawInfo();
 		DrawToast();
 
+		Mark("drawing the screen");
 		ImGui::Render();
 		SDL_SetRenderDrawColor(_sdlRenderer, 0, 0, 0, 255);
 		SDL_RenderClear(_sdlRenderer);
@@ -433,6 +477,7 @@ int App::Run()
 			DrawGame();
 		}
 		ImGui_ImplSDLRenderer3_RenderDrawData(ImGui::GetDrawData(), _sdlRenderer);
+		Mark("showing the frame on the TV");
 		SDL_RenderPresent(_sdlRenderer);
 	}
 
@@ -603,12 +648,14 @@ void App::LoadOnWorker(GameEntry game)
 			return;
 		}
 		SetStep("Mesen is starting the game");
+		g_workerMarker = "inside Mesen's LoadRom";
 		bool ok = false;
 		if(!hdeight::Guard("starting the game", [&] { ok = _emu->LoadRom(rom, VirtualFile()); })) {
 			_loadError = "Mesen crashed while starting the game.";
 			_loadDone = true;
 			return;
 		}
+		g_workerMarker = "LoadRom finished";
 		_loadOk = ok;
 		if(!_loadOk) {
 			_loadError = "Mesen could not start this game (it may not be an NES game, or the file is damaged).";

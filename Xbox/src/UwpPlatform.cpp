@@ -9,6 +9,10 @@
 #include <windows.h>
 
 #include <atomic>
+#include <chrono>
+#include <csignal>
+#include <cstdlib>
+#include <thread>
 #include <cstdio>
 #include <cstring>
 #include <deque>
@@ -115,6 +119,25 @@ void Log(std::string_view message)
 	}
 }
 
+void LogUrgent(std::string_view message)
+{
+	for(int i = 0; i < 50; i++) {
+		if(g_logLock.try_lock()) {
+			g_logLock.unlock();
+			Log(message);
+			return;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	// Someone is stuck holding the log: write straight to the file
+	std::string line = "[lookout] " + std::string(message) + "\n";
+	OutputDebugStringA(line.c_str());
+	if(g_logFile) {
+		fwrite(line.data(), 1, line.size(), g_logFile);
+		fflush(g_logFile);
+	}
+}
+
 std::vector<std::string> RecentLog(size_t count)
 {
 	std::lock_guard lock(g_logLock);
@@ -149,7 +172,16 @@ void WriteCrashLine(const char* text)
 
 void InstallCrashLogging()
 {
-	// (UWP apps cannot install a vectored exception handler, so only C++ errors are caught here)
+	// (UWP apps cannot install a vectored exception handler; Mesen's threads are guarded with __try instead)
+	// A bad argument to a C runtime function normally ends the app on the spot: log it and let the call fail instead
+	_set_invalid_parameter_handler([](const wchar_t*, const wchar_t*, const wchar_t*, unsigned int, uintptr_t) {
+		WriteCrashLine("[!] A C runtime function got a bad value (the call was skipped)\n");
+	});
+	_set_purecall_handler([] {
+		WriteCrashLine("[!] CRASH: pure virtual function call\n");
+		std::abort();
+	});
+	signal(SIGABRT, [](int) { WriteCrashLine("[!] CRASH: the app was aborted\n"); });
 	std::set_terminate([] {
 		std::string text = "[!] CRASH: unhandled C++ error";
 		try {

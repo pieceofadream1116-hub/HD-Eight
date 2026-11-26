@@ -24,6 +24,9 @@ void OpenLog(const std::filesystem::path& folder);
 /// Writes a timestamped line to the log file (and the debugger).
 void Log(std::string_view message);
 
+/// Like Log, but never waits more than a moment for the log lock (for the lookout thread).
+void LogUrgent(std::string_view message);
+
 /// The newest log lines, oldest first (for showing on the TV).
 std::vector<std::string> RecentLog(size_t count);
 

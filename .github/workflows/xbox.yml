@@ -98,7 +98,7 @@ jobs:
           $msix = Get-ChildItem out/xbox -Recurse -Filter *.msix | Sort-Object LastWriteTime -Descending | Select-Object -First 1
           if (!$msix) { throw 'No .msix was made' }
           Copy-Item $msix.FullName dist/HDEight.msix
-          $vclibs = Get-ChildItem $msix.Directory.FullName -Recurse -Filter '*.appx' | Where-Object { $_.FullName -match 'x64' } | Select-Object -First 1
+          $vclibs = Get-ChildItem $msix.Directory.FullName -Recurse -Filter 'Microsoft.VCLibs.x64.14.00.appx' | Select-Object -First 1
           if (!$vclibs) {
             $vclibs = Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs" -Recurse -Filter 'Microsoft.VCLibs.x64.14.00.appx' |
               Where-Object { $_.FullName -match 'Retail' } | Select-Object -First 1

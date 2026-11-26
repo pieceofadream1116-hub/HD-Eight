@@ -2,6 +2,7 @@
 
 #include "Core.h"
 #include "Covers.h"
+#include "EdgeScaler.h"
 #include "KnownCheats.h"
 #include "UwpPlatform.h"
 #include "XboxAudio.h"
@@ -503,16 +504,27 @@ void App::UploadFrame()
 	if(!_core || !_core->TakeFrame(_frameBuffer, w, h)) {
 		return;
 	}
-	if(!_gameTexture || w != _textureWidth || h != _textureHeight) {
+	// Max HD: the texture holds the picture made 4 times bigger with its edges rounded off
+	const bool maxHd = _settings.picture == PictureStyle::MaxHd;
+	const uint32_t texW = maxHd ? w * 4 : w;
+	const uint32_t texH = maxHd ? h * 4 : h;
+	if(maxHd) {
+		edge::Scale4x(_frameBuffer, w, h, _scaleScratch, _scaled);
+	}
+	if(!_gameTexture || texW != _gameTexW || texH != _gameTexH) {
 		if(_gameTexture) {
 			SDL_DestroyTexture(_gameTexture);
 		}
-		_gameTexture = SDL_CreateTexture(_sdlRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, (int)w, (int)h);
-		_textureWidth = w;
-		_textureHeight = h;
+		_gameTexture = SDL_CreateTexture(_sdlRenderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, (int)texW, (int)texH);
+		_gameTexW = texW;
+		_gameTexH = texH;
 	}
+	// The game's own picture size (scanlines and pixel perfect are worked out from it)
+	_textureWidth = w;
+	_textureHeight = h;
 	if(_gameTexture) {
-		SDL_UpdateTexture(_gameTexture, nullptr, _frameBuffer.data(), (int)(w * sizeof(uint32_t)));
+		const std::vector<uint32_t>& pixels = maxHd ? _scaled : _frameBuffer;
+		SDL_UpdateTexture(_gameTexture, nullptr, pixels.data(), (int)(texW * sizeof(uint32_t)));
 		_hasFrame = true;
 	}
 }

@@ -10,6 +10,7 @@ enum class PictureStyle
 	SharpPixels = 0,  // original pixels, no filter
 	Smooth,           // original pixels, smoothed when scaled up
 	TvLook,           // NTSC (Blargg) composite TV signal, made by the core
+	MaxHd,            // edges rounded off (Scale2x twice), then smoothed up to the TV's size
 	Count
 };
 

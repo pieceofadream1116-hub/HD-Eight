@@ -75,6 +75,8 @@ private:
 	uint32_t _textureWidth = 0;
 	uint32_t _textureHeight = 0;
 	std::vector<uint32_t> _frameBuffer;
+	std::vector<uint32_t> _scaled, _scaleScratch; // Max HD
+	uint32_t _gameTexW = 0, _gameTexH = 0;       // size of _gameTexture
 	bool _hasFrame = false;
 	bool _running = true;
 	bool _fontDirty = true;

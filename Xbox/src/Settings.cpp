@@ -9,6 +9,7 @@ const char* PictureStyleName(PictureStyle style)
 		case PictureStyle::SharpPixels: return "Sharp pixels";
 		case PictureStyle::Smooth: return "Smooth";
 		case PictureStyle::TvLook: return "Old TV look";
+		case PictureStyle::MaxHd: return "Max HD";
 		default: return "?";
 	}
 }
@@ -19,6 +20,7 @@ const char* PictureStyleHelp(PictureStyle style)
 		case PictureStyle::SharpPixels: return "The original blocky pixels, crisp and clean.";
 		case PictureStyle::Smooth: return "The original pixels, softened so edges don't look jagged.";
 		case PictureStyle::TvLook: return "Like a real TV of the time: colours blend the way games expected (waterfalls, shadows).";
+		case PictureStyle::MaxHd: return "Rounds off the blocky edges, then smooths the picture up to fill a 4K TV cleanly.";
 		default: return "";
 	}
 }

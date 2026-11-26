@@ -89,6 +89,8 @@ add_executable(Genesis WIN32
     src/XboxAudio.h
     src/XboxInput.cpp
     src/XboxInput.h
+    src/EdgeScaler.cpp
+    src/EdgeScaler.h
     src/Covers.cpp
     src/Covers.h
     src/KnownCheats.cpp

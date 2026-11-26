@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "Shared/HdEightGuard.h"
 #include "Shared/Video/VideoRenderer.h"
 #include "Shared/Video/VideoDecoder.h"
 #include "Shared/Interfaces/IRenderingDevice.h"
@@ -50,7 +51,11 @@ void VideoRenderer::StartThread()
 			_stopFlag = false;
 			_waitForRender.Reset();
 
+#ifdef HDEIGHT_UWP
+			_renderThread.reset(new std::thread([this] { hdeight::Guard("drawing the picture", [this] { RenderThread(); }); }));
+#else
 			_renderThread.reset(new std::thread(&VideoRenderer::RenderThread, this));
+#endif
 		}
 	}
 }

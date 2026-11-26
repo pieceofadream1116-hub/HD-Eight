@@ -7,6 +7,7 @@
 
 #include "Shared/CheatManager.h"
 #include "Shared/EmuSettings.h"
+#include "Shared/HdEightGuard.h"
 #include "Shared/Emulator.h"
 #include "Shared/KeyManager.h"
 #include "Shared/MessageManager.h"
@@ -22,6 +23,7 @@
 #include <imgui_impl_sdlrenderer3.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <fstream>
 #include <system_error>
@@ -29,6 +31,28 @@
 namespace fs = std::filesystem;
 
 namespace {
+
+// Set by the crash catcher (any thread), shown in a red box by the UI thread
+std::mutex g_crashLock;
+std::string g_crashText;
+std::atomic<bool> g_crashed = false;
+
+void OnCrash(const char* where, unsigned long code, unsigned long long offset, bool inImage)
+{
+	const char* what = code == 0xC0000005 ? "bad memory access" : code == 0xC00000FD ? "ran out of stack space" :
+		code == 0xC0000094 ? "divided by zero" : code == 0xC0000374 ? "memory got corrupted" : "hard crash";
+	char text[512];
+	snprintf(text, sizeof(text), "HD Eight crashed while %s: %s (error 0x%08lX at %s+0x%llX)", where, what, code,
+		inImage ? "HDEight.exe" : "address", offset);
+	uwp::Log(std::string("[!] CRASH: ") + text);
+	{
+		std::lock_guard lock(g_crashLock);
+		if(g_crashText.empty()) {
+			g_crashText = text;
+		}
+	}
+	g_crashed = true;
+}
 
 // Mesen's default NES palette (from its UI, UI/Config/NesConfig.cs); without it every game is drawn black
 constexpr uint32_t kDefaultPalette[64] = {
@@ -179,6 +203,7 @@ void App::SetUpProfile()
 bool App::Init()
 {
 	uwp::InstallCrashLogging();
+	hdeight::SetCrashReporter(OnCrash);
 	SetUpProfile();
 
 	// Keep the Xbox B button from sending the app to the background, and turn on the Xbox controller driver
@@ -578,7 +603,13 @@ void App::LoadOnWorker(GameEntry game)
 			return;
 		}
 		SetStep("Mesen is starting the game");
-		_loadOk = _emu->LoadRom(rom, VirtualFile());
+		bool ok = false;
+		if(!hdeight::Guard("starting the game", [&] { ok = _emu->LoadRom(rom, VirtualFile()); })) {
+			_loadError = "Mesen crashed while starting the game.";
+			_loadDone = true;
+			return;
+		}
+		_loadOk = ok;
 		if(!_loadOk) {
 			_loadError = "Mesen could not start this game (it may not be an NES game, or the file is damaged).";
 		}
@@ -1067,6 +1098,29 @@ void App::DrawLastSession()
 // The info panel: what HD Eight is doing right now, Mesen's counters and the newest log lines
 void App::DrawInfo()
 {
+	if(g_crashed) {
+		std::string text;
+		{
+			std::lock_guard lock(g_crashLock);
+			text = g_crashText;
+		}
+		const ImGuiViewport* viewport = ImGui::GetMainViewport();
+		ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 24, viewport->Pos.y + 24));
+		ImGui::SetNextWindowSize(ImVec2(viewport->Size.x - 48, 0));
+		ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.45f, 0.05f, 0.05f, 0.97f));
+		ImGui::Begin("Crash", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+			ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
+		ImGui::TextWrapped("%s", text.c_str());
+		ImGui::TextWrapped("Take a photo of this for Claude, then close HD Eight with the Xbox button.");
+		ImGui::SetWindowFontScale(0.6f);
+		for(const std::string& line : uwp::RecentLog(8)) {
+			ImGui::TextWrapped("%s", line.c_str());
+		}
+		ImGui::SetWindowFontScale(1.0f);
+		ImGui::End();
+		ImGui::PopStyleColor();
+		return;
+	}
 	bool noPicture = _screen == Screen::Playing && !_hasFrame;
 	if(!_loading && !noPicture && !(_showInfo && _screen == Screen::Playing && !_menuOpen)) {
 		return;

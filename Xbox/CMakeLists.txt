@@ -81,6 +81,8 @@ target_include_directories(HDEight PRIVATE src "${imgui_SOURCE_DIR}" "${imgui_SO
 target_link_libraries(HDEight PRIVATE mesen_core SDL3::SDL3)
 set_target_properties(HDEight PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 target_compile_options(HDEight PRIVATE /utf-8 /MP /W3 /wd4996 /EHsc)
+# 16 MB stacks for every thread (Mesen's threads use the default), and a map file to look up crash spots
+target_link_options(HDEight PRIVATE /STACK:16777216 "/MAP:${CMAKE_BINARY_DIR}/HDEight.map")
 
 ## UWP package
 if (HDEight_PACKAGE_VERSION)

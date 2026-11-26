@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "Shared/HdEightGuard.h"
 #include "Shared/Interfaces/IRenderingDevice.h"
 #include "Shared/Video/VideoDecoder.h"
 #include "Shared/Video/VideoRenderer.h"
@@ -218,7 +219,11 @@ void VideoDecoder::StartThread()
 		
 		_emu->GetVideoRenderer()->ClearFrame();
 
+#ifdef HDEIGHT_UWP
+		_decodeThread.reset(new thread([this] { hdeight::Guard("making the picture (video filter)", [this] { DecodeThread(); }); }));
+#else
 		_decodeThread.reset(new thread(&VideoDecoder::DecodeThread, this));
+#endif
 	}
 }
 

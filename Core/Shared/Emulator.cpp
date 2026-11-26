@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "Shared/HdEightGuard.h"
 #include <assert.h>
 #include "Shared/Emulator.h"
 #include "Shared/NotificationManager.h"
@@ -534,7 +535,11 @@ bool Emulator::InternalLoadRom(VirtualFile romFile, VirtualFile patchFile, bool 
 
 	if(stopRom) {
 		_stopFlag = false;
+#ifdef HDEIGHT_UWP
+		_emuThread.reset(new thread([this] { hdeight::Guard("running the game", [this] { Run(); }); }));
+#else
 		_emuThread.reset(new thread(&Emulator::Run, this));
+#endif
 	}
 
 	return true;

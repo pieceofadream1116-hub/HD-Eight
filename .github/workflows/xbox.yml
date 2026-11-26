@@ -108,6 +108,13 @@ jobs:
           if ($cer) { Copy-Item $cer.FullName dist/HDEight.cer }
           Get-ChildItem dist
 
+      - name: Upload crash lookup map
+        uses: actions/upload-artifact@v4
+        with:
+          name: hd-eight-${{ steps.version.outputs.version }}-map
+          path: out/xbox/HDEight.map
+          if-no-files-found: warn
+
       - name: Upload install files
         uses: actions/upload-artifact@v4
         with:

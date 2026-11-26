@@ -1,6 +1,10 @@
 #include "XboxAudio.h"
 
 #include "Shared/HdEightGuard.h"
+#include "UwpPlatform.h"
+
+#include <string>
+#include <thread>
 
 #include "Shared/Emulator.h"
 #include "Shared/EmuSettings.h"
@@ -14,41 +18,51 @@ XboxAudio::XboxAudio(Emulator* emu) : _emu(emu)
 XboxAudio::~XboxAudio()
 {
 	_emu->GetSoundMixer()->RegisterAudioDevice(nullptr);
+	SDL_AudioStream* stream = _stream.exchange(nullptr);
 	std::lock_guard lock(_lock);
-	if(_stream) {
-		SDL_DestroyAudioStream(_stream);
-		_stream = nullptr;
+	if(stream) {
+		SDL_DestroyAudioStream(stream);
 	}
 }
 
-bool XboxAudio::OpenDevice()
+void XboxAudio::OpenDeviceInBackground()
 {
-	std::lock_guard lock(_lock);
-	if(_stream) {
-		return true;
-	}
-	SDL_AudioSpec spec{};
-	spec.format = SDL_AUDIO_S16;
-	spec.channels = _isStereo ? 2 : 1;
-	spec.freq = (int)_sampleRate;
-	_stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
-	if(!_stream) {
-		return false;
-	}
-	// Play from the start: an empty stream just plays silence
-	SDL_ResumeAudioStreamDevice(_stream);
-	return true;
+	_state = "opening the Xbox sound device";
+	uwp::Log("Opening the Xbox sound device (on its own thread)");
+	std::thread([this] {
+		uwp::InitThreadForWinRT();
+		SDL_AudioSpec spec{};
+		spec.format = SDL_AUDIO_S16;
+		spec.channels = 2;
+		spec.freq = 48000;
+		SDL_AudioStream* stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+		if(!stream) {
+			_state = "no sound device (games play silently)";
+			uwp::Log(std::string("[!] Could not open the sound device: ") + SDL_GetError());
+			return;
+		}
+		_state = "starting the sound device";
+		SDL_ResumeAudioStreamDevice(stream);
+		{
+			std::lock_guard lock(_lock);
+			_sampleRate = 48000;
+			_isStereo = true;
+			_stream = stream;
+		}
+		_state = "sound on";
+		uwp::Log("Sound device open");
+	}).detach();
 }
 
 void XboxAudio::PlayBuffer(int16_t* soundBuffer, uint32_t sampleCount, uint32_t sampleRate, bool isStereo)
 {
 	_bufferCount++;
 	HD8_EMU("sending sound to the Xbox (SDL audio)");
-	std::lock_guard lock(_lock);
 	if(!_stream) {
-		HD8_EMU("sound skipped (no sound device)");
+		HD8_EMU("sound skipped (sound device not open yet)");
 		return;
 	}
+	std::lock_guard lock(_lock);
 	if(sampleRate != _sampleRate || isStereo != _isStereo) {
 		// Only the stream's input format changes; the device itself is not touched from this thread
 		SDL_AudioSpec spec{};

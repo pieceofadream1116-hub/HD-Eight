@@ -36,6 +36,9 @@ std::vector<std::string> ReadLogFile(const std::filesystem::path& folder);
 /// Writes unhandled C++ errors into the log before the app closes.
 void InstallCrashLogging();
 
+/// Sets up WinRT/COM on a thread HD Eight created itself (multi-threaded apartment). Safe to call more than once.
+void InitThreadForWinRT();
+
 /// Use the whole screen on Xbox instead of the TV-safe area (no black borders).
 void UseFullCoreWindowBounds();
 

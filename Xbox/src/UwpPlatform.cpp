@@ -198,6 +198,15 @@ void InstallCrashLogging()
 	});
 }
 
+void InitThreadForWinRT()
+{
+	try {
+		winrt::init_apartment(winrt::apartment_type::multi_threaded);
+	} catch(...) {
+		// Already set up on this thread
+	}
+}
+
 void UseFullCoreWindowBounds()
 {
 	try {

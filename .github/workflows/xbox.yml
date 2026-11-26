@@ -71,7 +71,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Could not download SDL3-uwp' }
           git -C out/SDL3-uwp checkout FETCH_HEAD
           cmake -S out/SDL3-uwp -B out/SDL3-build -G "${{ steps.vs.outputs.generator }}" -A x64 `
-            -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0 "-DCMAKE_INSTALL_PREFIX=$PWD/out/uwp-deps" `
+            "-DCMAKE_SYSTEM_NAME=WindowsStore" "-DCMAKE_SYSTEM_VERSION=10.0" "-DCMAKE_INSTALL_PREFIX=$PWD/out/uwp-deps" `
             -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TEST_LIBRARY=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
           if ($LASTEXITCODE -ne 0) { throw 'SDL3-uwp configure failed' }
           cmake --build out/SDL3-build --config Release --target install -- /m /v:minimal
@@ -81,7 +81,7 @@ jobs:
         shell: pwsh
         run: |
           cmake -S Xbox -B out/xbox -G "${{ steps.vs.outputs.generator }}" -A x64 `
-            -DCMAKE_SYSTEM_NAME=WindowsStore -DCMAKE_SYSTEM_VERSION=10.0 "-DCMAKE_PREFIX_PATH=$PWD/out/uwp-deps" `
+            "-DCMAKE_SYSTEM_NAME=WindowsStore" "-DCMAKE_SYSTEM_VERSION=10.0" "-DCMAKE_PREFIX_PATH=$PWD/out/uwp-deps" `
             "-DHDEight_PACKAGE_VERSION=${{ steps.version.outputs.version }}"
           if ($LASTEXITCODE -ne 0) { throw 'Configure failed' }
 

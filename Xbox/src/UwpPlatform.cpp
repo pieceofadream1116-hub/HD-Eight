@@ -16,8 +16,6 @@
 #include <fstream>
 #include <mutex>
 
-extern "C" IMAGE_DOS_HEADER __ImageBase;
-
 namespace uwp {
 
 using namespace winrt;
@@ -147,36 +145,11 @@ void WriteCrashLine(const char* text)
 	}
 }
 
-LONG CALLBACK CrashHandler(EXCEPTION_POINTERS* info)
-{
-	static std::atomic<int> reported = 0;
-	DWORD code = info->ExceptionRecord->ExceptionCode;
-	bool fatal = code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_STACK_OVERFLOW ||
-		code == EXCEPTION_ILLEGAL_INSTRUCTION || code == EXCEPTION_INT_DIVIDE_BY_ZERO ||
-		code == EXCEPTION_PRIV_INSTRUCTION || code == EXCEPTION_IN_PAGE_ERROR || code == 0xC0000374;
-	if(!fatal || reported++ >= 3) {
-		return EXCEPTION_CONTINUE_SEARCH;
-	}
-	auto base = (uintptr_t)&__ImageBase;
-	auto nt = (IMAGE_NT_HEADERS*)(base + __ImageBase.e_lfanew);
-	auto address = (uintptr_t)info->ExceptionRecord->ExceptionAddress;
-	char text[256];
-	if(address >= base && address < base + nt->OptionalHeader.SizeOfImage) {
-		snprintf(text, sizeof(text), "[!] CRASH: error 0x%08lX in HDEight.exe+0x%llX (thread %lu)\n", code,
-			(unsigned long long)(address - base), GetCurrentThreadId());
-	} else {
-		snprintf(text, sizeof(text), "[!] CRASH: error 0x%08lX at 0x%llX, outside HDEight.exe (thread %lu)\n", code,
-			(unsigned long long)address, GetCurrentThreadId());
-	}
-	WriteCrashLine(text);
-	return EXCEPTION_CONTINUE_SEARCH;
-}
-
 } // namespace
 
 void InstallCrashLogging()
 {
-	AddVectoredExceptionHandler(1, CrashHandler);
+	// (UWP apps cannot install a vectored exception handler, so only C++ errors are caught here)
 	std::set_terminate([] {
 		std::string text = "[!] CRASH: unhandled C++ error";
 		try {

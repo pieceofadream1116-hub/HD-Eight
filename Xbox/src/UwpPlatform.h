@@ -30,7 +30,7 @@ std::vector<std::string> RecentLog(size_t count);
 /// Reads hd-eight.log as the last session left it (call before OpenLog, which starts a new one).
 std::vector<std::string> ReadLogFile(const std::filesystem::path& folder);
 
-/// Writes crashes (bad memory access and the like) and C++ terminate calls into the log before the app closes.
+/// Writes unhandled C++ errors into the log before the app closes.
 void InstallCrashLogging();
 
 /// Use the whole screen on Xbox instead of the TV-safe area (no black borders).

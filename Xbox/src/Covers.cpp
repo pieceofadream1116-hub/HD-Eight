@@ -8,6 +8,7 @@
 #include <winrt/Windows.Web.Http.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <string_view>
 #include <fstream>
@@ -86,10 +87,17 @@ std::string CleanTitle(const std::string& title)
 	return out;
 }
 
-std::optional<std::string> HttpGet(Windows::Web::Http::HttpClient& client, const std::string& url)
+// status: the HTTP status code, or 0 when the request never got an answer (no network, blocked...)
+std::optional<std::string> HttpGet(Windows::Web::Http::HttpClient& client, const std::string& url, int* status = nullptr)
 {
+	if(status) {
+		*status = 0;
+	}
 	try {
 		auto response = client.GetAsync(Windows::Foundation::Uri(to_hstring(url))).get();
+		if(status) {
+			*status = (int)response.StatusCode();
+		}
 		if(!response.IsSuccessStatusCode()) {
 			return std::nullopt;
 		}
@@ -101,6 +109,12 @@ std::optional<std::string> HttpGet(Windows::Web::Http::HttpClient& client, const
 		std::string bytes(length, '\0');
 		DataReader::FromBuffer(buffer).ReadBytes(array_view<uint8_t>((uint8_t*)bytes.data(), (uint8_t*)bytes.data() + length));
 		return bytes;
+	} catch(const hresult_error& e) {
+		static std::atomic<int> logged = 0;
+		if(logged++ < 3) {
+			uwp::Log("[!] Download failed: " + to_string(e.message()) + " (" + url.substr(0, 60) + ")");
+		}
+		return std::nullopt;
 	} catch(...) {
 		return std::nullopt;
 	}
@@ -153,17 +167,20 @@ std::string ReadJsonString(const std::string& text, size_t pos)
 	return out;
 }
 
-std::string WikipediaDescription(Windows::Web::Http::HttpClient& client, const std::string& title)
+// nullopt when Wikipedia could not be reached (then nothing is saved, so it is tried again next time)
+std::optional<std::string> WikipediaDescription(Windows::Web::Http::HttpClient& client, const std::string& title)
 {
 	std::string url = "https://en.wikipedia.org/w/api.php?action=query&format=json&generator=search&gsrsearch=" +
 		UrlEncode(title + " NES video game") + "&gsrlimit=1&prop=extracts&exintro=1&explaintext=1&exchars=520";
-	auto body = HttpGet(client, url);
+	int status = 0;
+	auto body = HttpGet(client, url, &status);
 	if(!body) {
-		return {};
+		uwp::Log("Wikipedia answered " + std::to_string(status) + " for " + title);
+		return std::nullopt;
 	}
 	size_t key = body->find("\"extract\":");
 	if(key == std::string::npos) {
-		return {};
+		return std::string{};
 	}
 	size_t quote = body->find('"', key + 10);
 	return quote == std::string::npos ? std::string{} : ReadJsonString(*body, quote);
@@ -327,7 +344,7 @@ void Covers::Fetch(const GameEntry& game)
 {
 	const std::string base = SafeFileName(game.title);
 	const fs::path coverFile = _folder / FromU8(base + ".png");
-	const fs::path noCoverFile = _folder / FromU8(base + ".nocover");
+	const fs::path noCoverFile = _folder / FromU8(base + ".noart"); // (".nocover" files from 0.1.0.15 are ignored)
 	const fs::path textFile = _folder / FromU8(base + ".txt");
 	const std::string clean = CleanTitle(game.title);
 
@@ -336,16 +353,21 @@ void Covers::Fetch(const GameEntry& game)
 	auto http = [&]() -> Windows::Web::Http::HttpClient& {
 		if(!client) {
 			client.emplace();
+			// Wikipedia (and some image hosts) refuse requests that do not say which app is asking
+			client->DefaultRequestHeaders().UserAgent().TryParseAdd(L"HDEight/0.1 (Xbox UWP NES emulator; github.com/pieceofadream1116-hub/HD-Eight)");
 		}
 		return *client;
 	};
 
-	// Description
-	if(auto text = ReadFile(textFile)) {
+	// Description (an empty file from an earlier failed try counts as missing)
+	auto text = ReadFile(textFile);
+	if(text && !text->empty()) {
 		result.description = *text;
-	} else {
-		result.description = WikipediaDescription(http(), clean);
-		WriteFile(textFile, result.description);
+	} else if(auto fetched = WikipediaDescription(http(), clean)) {
+		result.description = *fetched;
+		if(!fetched->empty()) {
+			WriteFile(textFile, *fetched);
+		}
 	}
 	result.descriptionDone = true;
 	{
@@ -361,16 +383,24 @@ void Covers::Fetch(const GameEntry& game)
 		for(const char* region : {"USA", "USA, Europe", "Europe", "Japan", "World"}) {
 			candidates.push_back(ToLibretroName(clean) + " (" + region + ")");
 		}
+		bool allNotFound = true;
 		for(const std::string& candidate : candidates) {
+			int status = 0;
 			image = HttpGet(http(), "https://thumbnails.libretro.com/Nintendo%20-%20Nintendo%20Entertainment%20System/Named_Boxarts/" +
-				UrlEncode(candidate) + ".png");
+				UrlEncode(candidate) + ".png", &status);
 			if(image) {
 				uwp::Log("Box art found: " + candidate);
 				WriteFile(coverFile, *image);
 				break;
 			}
+			if(status != 404) {
+				allNotFound = false;
+				uwp::Log("Box art site answered " + std::to_string(status) + " for " + candidate);
+				break; // not a simple "no such picture": stop and try again another time
+			}
 		}
-		if(!image) {
+		if(!image && allNotFound) {
+			// Only remember "no box art" when the site really said it has none
 			WriteFile(noCoverFile, "");
 			uwp::Log("No box art for " + game.title);
 		}

@@ -304,6 +304,12 @@ bool App::Init()
 	KeyManager::SetSettings(_emu->GetSettings());
 	_video = std::make_unique<XboxRenderer>(_emu.get());
 	_audio = std::make_unique<XboxAudio>(_emu.get());
+	uwp::Log("Opening the Xbox sound device");
+	if(_audio->OpenDevice()) {
+		uwp::Log("Sound device open");
+	} else {
+		uwp::Log(std::string("[!] No sound device: ") + SDL_GetError());
+	}
 	_input = std::make_unique<XboxInput>(_emu.get());
 	{
 		int w = 1920, h = 1080;
@@ -855,7 +861,7 @@ static void Title(const char* text)
 void App::DrawLibrary()
 {
 	BeginFullScreen("Library", _focusNext);
-	Title("HD EIGHT");
+	Title("HD EIGHT   (version " HDEIGHT_VERSION ")");
 	DrawLastSession();
 
 	if(BigButton("Choose games folder")) {

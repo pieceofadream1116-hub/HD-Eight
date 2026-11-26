@@ -25,17 +25,26 @@ XboxAudio::~XboxAudio()
 	}
 }
 
+namespace {
+
+// The Saturn app gives SDL a callback: SDL calls it when the device wants more sound. Mesen pushes its sound with
+// SDL_PutAudioStreamData instead, so there is nothing to do here.
+void SDLCALL AudioCallback(void*, SDL_AudioStream*, int, int) {}
+
+} // namespace
+
 void XboxAudio::OpenDeviceInBackground()
 {
 	_state = "opening the Xbox sound device";
 	uwp::Log("Opening the Xbox sound device (on its own thread)");
-	std::thread([this] {
-		uwp::InitThreadForWinRT();
+	SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
+	std::thread([] {
+		auto start = SDL_GetTicks();
 		SDL_AudioSpec spec{};
 		spec.format = SDL_AUDIO_S16;
 		spec.channels = 2;
 		spec.freq = 48000;
-		SDL_AudioStream* stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, nullptr, nullptr);
+		SDL_AudioStream* stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, &AudioCallback, nullptr);
 		if(!stream) {
 			_state = "no sound device (games play silently)";
 			uwp::Log(std::string("[!] Could not open the sound device: ") + SDL_GetError());
@@ -43,14 +52,9 @@ void XboxAudio::OpenDeviceInBackground()
 		}
 		_state = "starting the sound device";
 		SDL_ResumeAudioStreamDevice(stream);
-		{
-			std::lock_guard lock(_lock);
-			_sampleRate = 48000;
-			_isStereo = true;
-			_stream = stream;
-		}
+		_stream = stream;
 		_state = "sound on";
-		uwp::Log("Sound device open");
+		uwp::Log("Sound device open after " + std::to_string(SDL_GetTicks() - start) + " ms");
 	}).detach();
 }
 

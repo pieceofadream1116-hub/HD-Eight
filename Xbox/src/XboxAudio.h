@@ -21,12 +21,13 @@ public:
 	explicit XboxAudio(Emulator* emu);
 	~XboxAudio() override;
 
-	/// Starts opening the Xbox sound device on its own thread (opening it can hang on Xbox, from any thread).
+	/// Starts opening the Xbox sound device on its own thread, the way the Saturn app does it (callback stream,
+	/// sample-frames hint, right after the renderer is made and before anything else starts).
 	/// Until it is open, Mesen's sound is skipped and games play silently.
-	void OpenDeviceInBackground();
+	static void OpenDeviceInBackground();
 
 	/// What the sound device is doing, for the on-screen info.
-	const char* State() const { return _state; }
+	static const char* State() { return _state; }
 
 	void PlayBuffer(int16_t* soundBuffer, uint32_t sampleCount, uint32_t sampleRate, bool isStereo) override;
 	void Stop() override;
@@ -44,8 +45,8 @@ public:
 private:
 	Emulator* _emu;
 	std::mutex _lock;
-	std::atomic<SDL_AudioStream*> _stream = nullptr;
-	std::atomic<const char*> _state = "not started";
+	static inline std::atomic<SDL_AudioStream*> _stream = nullptr;
+	static inline std::atomic<const char*> _state = "not started";
 	uint32_t _sampleRate = 48000; // format of the samples Mesen sends (the stream converts to the device format)
 	bool _isStereo = true;
 	double _averageLatency = 0;

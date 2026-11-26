@@ -121,6 +121,7 @@ void XboxInput::Poll()
 
 bool XboxInput::IsKeyPressed(uint16_t keyCode)
 {
+	_readCount++;
 	if(_disabled || keyCode < pad::kBase) {
 		return false;
 	}

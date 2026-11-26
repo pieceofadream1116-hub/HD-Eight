@@ -28,6 +28,7 @@ void XboxRenderer::UpdateFrame(RenderedFrame& frame)
 	_width = frame.Width;
 	_height = frame.Height;
 	_newFrame = true;
+	_frameCount++;
 }
 
 void XboxRenderer::ClearFrame()

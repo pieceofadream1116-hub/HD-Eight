@@ -8,9 +8,15 @@
 
 #include <windows.h>
 
+#include <atomic>
 #include <cstdio>
+#include <cstring>
+#include <deque>
+#include <exception>
 #include <fstream>
 #include <mutex>
+
+extern "C" IMAGE_DOS_HEADER __ImageBase;
 
 namespace uwp {
 
@@ -23,6 +29,7 @@ namespace {
 
 std::mutex g_logLock;
 FILE* g_logFile = nullptr;
+std::deque<std::string> g_recent;
 
 bool IsWritableDirectory(const std::filesystem::path& path)
 {
@@ -100,10 +107,90 @@ void Log(std::string_view message)
 
 	OutputDebugStringA(line.c_str());
 	std::lock_guard lock(g_logLock);
+	g_recent.push_back(std::string(stamp) + std::string(message));
+	if(g_recent.size() > 200) {
+		g_recent.pop_front();
+	}
 	if(g_logFile) {
 		fwrite(line.data(), 1, line.size(), g_logFile);
 		fflush(g_logFile);
 	}
+}
+
+std::vector<std::string> RecentLog(size_t count)
+{
+	std::lock_guard lock(g_logLock);
+	size_t start = g_recent.size() > count ? g_recent.size() - count : 0;
+	return std::vector<std::string>(g_recent.begin() + start, g_recent.end());
+}
+
+std::vector<std::string> ReadLogFile(const std::filesystem::path& folder)
+{
+	std::vector<std::string> lines;
+	std::ifstream file(folder / "hd-eight.log");
+	std::string line;
+	while(std::getline(file, line)) {
+		lines.push_back(line);
+	}
+	return lines;
+}
+
+namespace {
+
+// Written without the log lock: the crash may have happened while another thread held it
+void WriteCrashLine(const char* text)
+{
+	OutputDebugStringA(text);
+	if(g_logFile) {
+		fwrite(text, 1, strlen(text), g_logFile);
+		fflush(g_logFile);
+	}
+}
+
+LONG CALLBACK CrashHandler(EXCEPTION_POINTERS* info)
+{
+	static std::atomic<int> reported = 0;
+	DWORD code = info->ExceptionRecord->ExceptionCode;
+	bool fatal = code == EXCEPTION_ACCESS_VIOLATION || code == EXCEPTION_STACK_OVERFLOW ||
+		code == EXCEPTION_ILLEGAL_INSTRUCTION || code == EXCEPTION_INT_DIVIDE_BY_ZERO ||
+		code == EXCEPTION_PRIV_INSTRUCTION || code == EXCEPTION_IN_PAGE_ERROR || code == 0xC0000374;
+	if(!fatal || reported++ >= 3) {
+		return EXCEPTION_CONTINUE_SEARCH;
+	}
+	auto base = (uintptr_t)&__ImageBase;
+	auto nt = (IMAGE_NT_HEADERS*)(base + __ImageBase.e_lfanew);
+	auto address = (uintptr_t)info->ExceptionRecord->ExceptionAddress;
+	char text[256];
+	if(address >= base && address < base + nt->OptionalHeader.SizeOfImage) {
+		snprintf(text, sizeof(text), "[!] CRASH: error 0x%08lX in HDEight.exe+0x%llX (thread %lu)\n", code,
+			(unsigned long long)(address - base), GetCurrentThreadId());
+	} else {
+		snprintf(text, sizeof(text), "[!] CRASH: error 0x%08lX at 0x%llX, outside HDEight.exe (thread %lu)\n", code,
+			(unsigned long long)address, GetCurrentThreadId());
+	}
+	WriteCrashLine(text);
+	return EXCEPTION_CONTINUE_SEARCH;
+}
+
+} // namespace
+
+void InstallCrashLogging()
+{
+	AddVectoredExceptionHandler(1, CrashHandler);
+	std::set_terminate([] {
+		std::string text = "[!] CRASH: unhandled C++ error";
+		try {
+			if(auto current = std::current_exception()) {
+				std::rethrow_exception(current);
+			}
+		} catch(const std::exception& e) {
+			text += std::string(": ") + e.what();
+		} catch(...) {
+		}
+		text += "\n";
+		WriteCrashLine(text.c_str());
+		std::abort();
+	});
 }
 
 void UseFullCoreWindowBounds()

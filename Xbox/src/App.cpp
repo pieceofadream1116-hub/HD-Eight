@@ -9,6 +9,8 @@
 #include "Shared/EmuSettings.h"
 #include "Shared/Emulator.h"
 #include "Shared/KeyManager.h"
+#include "Shared/MessageManager.h"
+#include "Shared/Video/VideoRenderer.h"
 #include "Shared/SaveStateManager.h"
 #include "Shared/SettingTypes.h"
 #include "Utilities/ArchiveReader.h"
@@ -154,6 +156,14 @@ void App::SetUpProfile()
 	std::error_code ec;
 	fs::create_directories(_profile / "Games", ec);
 	fs::create_directories(_profile / "Cheats", ec);
+
+	// Keep the last run's log if it ended with a problem (crash, freeze, game that would not start) to show on the TV
+	std::vector<std::string> previous = uwp::ReadLogFile(_profile);
+	bool problem = std::any_of(previous.begin(), previous.end(), [](const std::string& line) { return line.find("[!]") != std::string::npos; });
+	if(problem) {
+		size_t start = previous.size() > 14 ? previous.size() - 14 : 0;
+		_lastSession.assign(previous.begin() + start, previous.end());
+	}
 	uwp::OpenLog(_profile);
 	uwp::Log("HD Eight " HDEIGHT_VERSION " starting, profile: " + U8(_profile));
 
@@ -168,6 +178,7 @@ void App::SetUpProfile()
 
 bool App::Init()
 {
+	uwp::InstallCrashLogging();
 	SetUpProfile();
 
 	// Keep the Xbox B button from sending the app to the background, and turn on the Xbox controller driver
@@ -235,7 +246,13 @@ bool App::Init()
 	_video = std::make_unique<XboxRenderer>(_emu.get());
 	_audio = std::make_unique<XboxAudio>(_emu.get());
 	_input = std::make_unique<XboxInput>(_emu.get());
+	{
+		int w = 1920, h = 1080;
+		SDL_GetCurrentRenderOutputSize(_sdlRenderer, &w, &h);
+		_emu->GetVideoRenderer()->SetRendererSize((uint32_t)w, (uint32_t)h);
+	}
 	ApplyMesenSettings();
+	uwp::Log("Mesen is ready");
 
 	std::vector<fs::path> folders{_profile / "Games"};
 	if(!_settings.gamesFolder.empty()) {
@@ -360,8 +377,14 @@ int App::Run()
 		}
 
 		_input->Poll();
-		HandleHotkeys();
+		if(_loading && _loadDone) {
+			FinishLoad();
+		}
+		if(!_loading) {
+			HandleHotkeys();
+		}
 		UploadFrame();
+		ForwardMesenLog();
 
 		if(_fontDirty) {
 			ReloadFont();
@@ -370,11 +393,12 @@ int App::Run()
 		ImGui_ImplSDL3_NewFrame();
 		ImGui::NewFrame();
 
-		if(_screen == Screen::Library) {
+		if(_screen == Screen::Library && !_loading) {
 			DrawLibrary();
-		} else if(_menuOpen) {
+		} else if(_screen == Screen::Playing && _menuOpen) {
 			DrawMenu();
 		}
+		DrawInfo();
 		DrawToast();
 
 		ImGui::Render();
@@ -393,7 +417,17 @@ int App::Run()
 
 void App::Shutdown()
 {
+	if(_loadThread.joinable()) {
+		if(_loadDone) {
+			_loadThread.join();
+		} else {
+			uwp::Log("[!] Closing while a game is still loading (step: " + _step + ")");
+			_loadThread.detach();
+			return; // Mesen is stuck inside the load: leave it, the app is closing anyway
+		}
+	}
 	if(_emu) {
+		uwp::Log("HD Eight closed normally");
 		_settings.Save();
 		_emu->Stop(false);
 		_input.reset();
@@ -491,35 +525,144 @@ void App::DrawGame()
 	SDL_RenderTexture(_sdlRenderer, _gameTexture, nullptr, &dst);
 }
 
+void App::SetStep(std::string step)
+{
+	uwp::Log("Step: " + step);
+	std::lock_guard lock(_stepLock);
+	_step = std::move(step);
+	_stepTime = std::chrono::steady_clock::now();
+}
+
 void App::StartGame(const GameEntry& game)
 {
-	ApplyMesenSettings();
-	std::string path = U8(game.path);
-	VirtualFile rom(path);
-	if(rom.IsArchive()) {
-		std::unique_ptr<ArchiveReader> reader = ArchiveReader::GetReader(path);
-		std::vector<std::string> files = reader ? reader->GetFileList(VirtualFile::RomExtensions) : std::vector<std::string>{};
-		if(files.empty()) {
-			Toast("No game inside " + game.title);
-			return;
-		}
-		rom = VirtualFile(path, files.front());
-	}
-	uwp::Log("Loading " + path);
-	if(!_emu->LoadRom(rom, VirtualFile())) {
-		uwp::Log("Load failed");
-		Toast("Could not start " + game.title);
+	if(_loading) {
 		return;
 	}
-	_currentGame = game;
+	if(_loadThread.joinable()) {
+		_loadThread.join();
+	}
+	ApplyMesenSettings();
+	_loadGame = game;
+	_loadOk = false;
+	_loadError.clear();
+	_loadDone = false;
+	_warnedSlowLoad = false;
+	_loadStart = std::chrono::steady_clock::now();
+	_loading = true;
+	SetStep("Getting ready to start " + game.title);
+	_loadThread = std::thread([this, game] { LoadOnWorker(game); });
+}
+
+// Runs on the load thread. Only touches Mesen and the step text; the UI thread waits for _loadDone.
+void App::LoadOnWorker(GameEntry game)
+{
+	try {
+		std::string path = U8(game.path);
+		SetStep("Opening the game file: " + path);
+		VirtualFile rom(path);
+		if(rom.IsArchive()) {
+			SetStep("Looking inside the zip file");
+			std::unique_ptr<ArchiveReader> reader = ArchiveReader::GetReader(path);
+			std::vector<std::string> files = reader ? reader->GetFileList(VirtualFile::RomExtensions) : std::vector<std::string>{};
+			if(files.empty()) {
+				_loadError = "There is no NES game inside " + game.title;
+				_loadDone = true;
+				return;
+			}
+			rom = VirtualFile(path, files.front());
+		}
+		SetStep("Reading the game file");
+		if(!rom.IsValid()) {
+			_loadError = "HD Eight could not read the file. It may be on a drive the app is not allowed to open.";
+			_loadDone = true;
+			return;
+		}
+		SetStep("Mesen is starting the game");
+		_loadOk = _emu->LoadRom(rom, VirtualFile());
+		if(!_loadOk) {
+			_loadError = "Mesen could not start this game (it may not be an NES game, or the file is damaged).";
+		}
+	} catch(const std::exception& e) {
+		_loadError = std::string("Error while starting the game: ") + e.what();
+	} catch(...) {
+		_loadError = "Unknown error while starting the game";
+	}
+	_loadDone = true;
+}
+
+void App::FinishLoad()
+{
+	if(_loadThread.joinable()) {
+		_loadThread.join();
+	}
+	_loading = false;
+	if(!_loadOk) {
+		uwp::Log("[!] Load failed: " + _loadError);
+		SetStep("Could not start " + _loadGame.title);
+		Toast(_loadError, 10);
+		_focusNext = true;
+		return;
+	}
+	SetStep("Game started, waiting for the first picture");
+	_currentGame = _loadGame;
 	_currentSha1 = Upper(_emu->GetHash(HashType::Sha1Cheat));
+	uwp::Log("Game SHA-1: " + _currentSha1);
 	_cheats = GameCheats{};
 	_cheats.Load(_profile / "Cheats" / (_currentSha1 + ".txt"));
 	ApplyCheats();
 	_hasFrame = false;
 	_screen = Screen::Playing;
 	_menuOpen = false;
+	_playStart = std::chrono::steady_clock::now();
+	_framesAtStart = _video->FrameCount();
+	_warnedNoPicture = false;
 	Toast("Click the right stick for the menu");
+}
+
+void App::ForwardMesenLog()
+{
+	auto now = std::chrono::steady_clock::now();
+	if(now - _lastLogPoll < std::chrono::milliseconds(500)) {
+		return;
+	}
+	_lastLogPoll = now;
+
+	// Mesen's own messages ("could not load file", game database...) go into its log list; copy the new ones into ours
+	std::string text = MessageManager::GetLog();
+	std::vector<std::string> lines;
+	size_t pos = 0;
+	while(pos < text.size()) {
+		size_t end = text.find('\n', pos);
+		if(end == std::string::npos) {
+			end = text.size();
+		}
+		lines.push_back(text.substr(pos, end - pos));
+		pos = end + 1;
+	}
+	if(lines.size() < _mesenLogLines) {
+		_mesenLogLines = 0; // Mesen trimmed its list
+	}
+	for(size_t i = _mesenLogLines; i < lines.size(); i++) {
+		uwp::Log("Mesen: " + lines[i]);
+	}
+	_mesenLogLines = lines.size();
+
+	if(_loading && !_warnedSlowLoad && now - _loadStart > std::chrono::seconds(10)) {
+		_warnedSlowLoad = true;
+		std::lock_guard lock(_stepLock);
+		uwp::Log("[!] Still loading after 10 seconds, stuck at: " + _step);
+	}
+	if(_screen == Screen::Playing && !_menuOpen && !_warnedNoPicture && now - _playStart > std::chrono::seconds(5) &&
+		_video->FrameCount() == _framesAtStart) {
+		_warnedNoPicture = true;
+		uwp::Log("[!] The game is running but no picture arrived after 5 seconds");
+	}
+	if(_screen == Screen::Playing && _hasFrame) {
+		std::lock_guard lock(_stepLock);
+		if(_step.rfind("Game started", 0) == 0) {
+			_step = "Playing";
+		}
+	}
 }
 
 void App::QuitGame()
@@ -576,10 +719,10 @@ void App::ApplyCheats()
 	}
 }
 
-void App::Toast(std::string text)
+void App::Toast(std::string text, int seconds)
 {
 	_toast = std::move(text);
-	_toastUntil = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+	_toastUntil = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
 }
 
 bool App::BackPressed() const
@@ -620,6 +763,7 @@ void App::DrawLibrary()
 {
 	BeginFullScreen("Library", _focusNext);
 	Title("HD EIGHT");
+	DrawLastSession();
 
 	if(BigButton("Choose games folder")) {
 		uwp::PickFolder([this](std::string folder) {
@@ -733,6 +877,9 @@ void App::DrawMenuMain()
 		_emu->Reset();
 		CloseMenu();
 		return;
+	}
+	if(BigButton(_showInfo ? "Hide info on screen" : "Show info on screen")) {
+		_showInfo = !_showInfo;
 	}
 	if(BigButton("Quit to game list")) {
 		QuitGame();
@@ -893,5 +1040,86 @@ void App::DrawToast()
 	ImGui::Begin("Toast", nullptr,
 		ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoSavedSettings);
 	ImGui::TextUnformatted(_toast.c_str());
+	ImGui::End();
+}
+
+void App::DrawLastSession()
+{
+	if(_lastSession.empty()) {
+		return;
+	}
+	ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.35f, 0.08f, 0.08f, 1.0f));
+	ImGui::BeginChild("lastSession", ImVec2(0, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+	ImGui::TextWrapped("Last time, HD Eight had a problem. These are its last notes. Take a photo of this for Claude:");
+	ImGui::SetWindowFontScale(0.6f);
+	for(const std::string& line : _lastSession) {
+		ImGui::TextWrapped("%s", line.c_str());
+	}
+	ImGui::SetWindowFontScale(1.0f);
+	if(ImGui::Button("Hide this")) {
+		_lastSession.clear();
+		_focusNext = true;
+	}
+	ImGui::EndChild();
+	ImGui::PopStyleColor();
+}
+
+// The info panel: what HD Eight is doing right now, Mesen's counters and the newest log lines
+void App::DrawInfo()
+{
+	bool noPicture = _screen == Screen::Playing && !_hasFrame;
+	if(!_loading && !noPicture && !(_showInfo && _screen == Screen::Playing && !_menuOpen)) {
+		return;
+	}
+	auto now = std::chrono::steady_clock::now();
+	std::string step;
+	double stepSeconds = 0;
+	{
+		std::lock_guard lock(_stepLock);
+		step = _step;
+		stepSeconds = std::chrono::duration<double>(now - _stepTime).count();
+	}
+
+	const ImGuiViewport* viewport = ImGui::GetMainViewport();
+	bool big = _loading || noPicture;
+	ImGui::SetNextWindowPos(ImVec2(viewport->Pos.x + 24, viewport->Pos.y + viewport->Size.y - 24), ImGuiCond_Always, ImVec2(0.0f, 1.0f));
+	ImGui::SetNextWindowSize(ImVec2(big ? viewport->Size.x - 48 : viewport->Size.x * 0.42f, 0));
+	ImGui::SetNextWindowBgAlpha(0.85f);
+	ImGui::Begin("Info", nullptr,
+		ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav |
+			ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_AlwaysAutoResize);
+	if(!big) {
+		ImGui::SetWindowFontScale(0.6f);
+	}
+
+	// A moving dot shows the screen itself is not frozen
+	static const char* spinner[] = {"|", "/", "-", "\\"};
+	int tick = (int)(std::chrono::duration<double>(now.time_since_epoch()).count() * 4) % 4;
+	if(_loading) {
+		double total = std::chrono::duration<double>(now - _loadStart).count();
+		ImGui::Text("%s  Starting %s ... %.0f seconds", spinner[tick], _loadGame.title.c_str(), total);
+	} else {
+		ImGui::Text("%s  %s", spinner[tick], _screen == Screen::Playing ? _currentGame.title.c_str() : "HD Eight");
+	}
+	ImGui::TextWrapped("Now: %s (%.0f s)", step.c_str(), stepSeconds);
+	ImGui::Text("Pictures: %llu   Sounds: %llu   Controller reads: %llu", (unsigned long long)_video->FrameCount(),
+		(unsigned long long)_audio->BufferCount(), (unsigned long long)_input->ReadCount());
+
+	if(big) {
+		ImGui::Separator();
+		ImGui::SetWindowFontScale(0.6f);
+		for(const std::string& line : uwp::RecentLog(8)) {
+			bool problem = line.find("[!]") != std::string::npos;
+			if(problem) {
+				ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.45f, 0.4f, 1.0f));
+			}
+			ImGui::TextWrapped("%s", line.c_str());
+			if(problem) {
+				ImGui::PopStyleColor();
+			}
+		}
+		ImGui::SetWindowFontScale(1.0f);
+	}
+	ImGui::SetWindowFontScale(1.0f);
 	ImGui::End();
 }

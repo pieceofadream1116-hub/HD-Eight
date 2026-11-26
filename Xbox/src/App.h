@@ -7,11 +7,13 @@
 
 #include <SDL3/SDL.h>
 
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 class Emulator;
@@ -38,11 +40,17 @@ private:
 	void ApplyMesenSettings();
 
 	void StartGame(const GameEntry& game);
+	void LoadOnWorker(GameEntry game);
+	void FinishLoad();
+	void SetStep(std::string step);
+	void ForwardMesenLog();
+	void DrawInfo();
+	void DrawLastSession();
 	void QuitGame();
 	void OpenMenu();
 	void CloseMenu();
 	void ApplyCheats();
-	void Toast(std::string text);
+	void Toast(std::string text, int seconds = 3);
 
 	void HandleHotkeys();
 	void UploadFrame();
@@ -93,6 +101,26 @@ private:
 
 	std::string _toast;
 	std::chrono::steady_clock::time_point _toastUntil;
+
+	// Loading runs on its own thread so the TV picture never freezes; the info panel shows each step
+	std::thread _loadThread;
+	std::atomic<bool> _loading = false;
+	std::atomic<bool> _loadDone = false;
+	bool _loadOk = false;
+	std::string _loadError;
+	GameEntry _loadGame;
+	std::mutex _stepLock;
+	std::string _step;
+	std::chrono::steady_clock::time_point _stepTime;
+	std::chrono::steady_clock::time_point _loadStart;
+	bool _warnedSlowLoad = false;
+	std::chrono::steady_clock::time_point _playStart;
+	uint64_t _framesAtStart = 0;
+	bool _warnedNoPicture = false;
+	bool _showInfo = true;
+	size_t _mesenLogLines = 0;
+	std::chrono::steady_clock::time_point _lastLogPoll;
+	std::vector<std::string> _lastSession;   // the previous run's log, shown when it ended with a problem
 
 	std::mutex _pickLock;
 	std::string _pickedFolder;

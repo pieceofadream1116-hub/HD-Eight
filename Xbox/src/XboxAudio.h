@@ -6,6 +6,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <atomic>
 #include <mutex>
 
 class Emulator;
@@ -26,6 +27,9 @@ public:
 
 	AudioStatistics GetStatistics() override;
 
+	/// How many sound buffers Mesen has sent (for the on-screen info).
+	uint64_t BufferCount() const { return _bufferCount; }
+
 private:
 	void Open(uint32_t sampleRate, bool isStereo);
 	void Close();
@@ -38,4 +42,5 @@ private:
 	bool _playing = false;
 	double _averageLatency = 0;
 	uint32_t _underruns = 0;
+	std::atomic<uint64_t> _bufferCount = 0;
 };

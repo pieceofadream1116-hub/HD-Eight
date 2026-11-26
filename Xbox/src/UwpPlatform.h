@@ -5,6 +5,7 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace uwp {
 
@@ -22,6 +23,15 @@ void OpenLog(const std::filesystem::path& folder);
 
 /// Writes a timestamped line to the log file (and the debugger).
 void Log(std::string_view message);
+
+/// The newest log lines, oldest first (for showing on the TV).
+std::vector<std::string> RecentLog(size_t count);
+
+/// Reads hd-eight.log as the last session left it (call before OpenLog, which starts a new one).
+std::vector<std::string> ReadLogFile(const std::filesystem::path& folder);
+
+/// Writes crashes (bad memory access and the like) and C++ terminate calls into the log before the app closes.
+void InstallCrashLogging();
 
 /// Use the whole screen on Xbox instead of the TV-safe area (no black borders).
 void UseFullCoreWindowBounds();

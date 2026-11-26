@@ -48,6 +48,9 @@ public:
 	/// Buttons held on any pad (bit per pad::Button), for menu navigation.
 	uint64_t AnyPadButtons() const { return _anyPad; }
 
+	/// How many times Mesen has read the controllers (for the on-screen info).
+	uint64_t ReadCount() const { return _readCount; }
+
 	void RefreshState() override {}
 	void UpdateDevices() override {}
 	bool IsMouseButtonPressed(MouseButton) override { return false; }
@@ -65,6 +68,7 @@ private:
 	std::array<std::atomic<uint64_t>, kMaxPlayers> _state{};
 	std::atomic<uint64_t> _anyPad = 0;
 	std::atomic<bool> _disabled = false;
+	std::atomic<uint64_t> _readCount = 0;
 	std::array<SDL_Gamepad*, kMaxPlayers> _pads{};
 	std::atomic<uint16_t> _rumbleLow = 0;
 	std::atomic<uint16_t> _rumbleHigh = 0;

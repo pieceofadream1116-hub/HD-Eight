@@ -39,6 +39,7 @@ void XboxAudio::Close()
 
 void XboxAudio::PlayBuffer(int16_t* soundBuffer, uint32_t sampleCount, uint32_t sampleRate, bool isStereo)
 {
+	_bufferCount++;
 	std::lock_guard lock(_lock);
 	if(!_stream || sampleRate != _sampleRate || isStereo != _isStereo) {
 		Open(sampleRate, isStereo);

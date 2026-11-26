@@ -5,6 +5,7 @@
 #include "pch.h"
 #include "Shared/Interfaces/IRenderingDevice.h"
 
+#include <atomic>
 #include <mutex>
 #include <vector>
 
@@ -28,6 +29,9 @@ public:
 	/// Copies Mesen's on-screen messages layer (save state, cheats...) if it changed (UI thread).
 	bool TakeHud(std::vector<uint32_t>& out, uint32_t& width, uint32_t& height);
 
+	/// How many finished pictures Mesen has sent (for the on-screen info).
+	uint64_t FrameCount() const { return _frameCount; }
+
 private:
 	Emulator* _emu;
 	std::mutex _lock;
@@ -35,6 +39,7 @@ private:
 	uint32_t _width = 0;
 	uint32_t _height = 0;
 	bool _newFrame = false;
+	std::atomic<uint64_t> _frameCount = 0;
 
 	std::vector<uint32_t> _hud;
 	uint32_t _hudWidth = 0;

@@ -3,116 +3,200 @@
 #include "Shared/HdEightGuard.h"
 #include "UwpPlatform.h"
 
-#include <string>
-#include <thread>
-
 #include "Shared/Emulator.h"
 #include "Shared/EmuSettings.h"
 #include "Shared/Audio/SoundMixer.h"
 
+#include <windows.h>
+#include <xaudio2.h>
+
+#include <cstring>
+#include <string>
+
+class XboxAudio::Callback final : public IXAudio2VoiceCallback
+{
+public:
+	explicit Callback(XboxAudio& owner) : _owner(owner) {}
+	void STDMETHODCALLTYPE OnVoiceProcessingPassStart(UINT32) override {}
+	void STDMETHODCALLTYPE OnVoiceProcessingPassEnd() override {}
+	void STDMETHODCALLTYPE OnStreamEnd() override {}
+	void STDMETHODCALLTYPE OnBufferStart(void*) override {}
+	void STDMETHODCALLTYPE OnLoopEnd(void*) override {}
+	void STDMETHODCALLTYPE OnVoiceError(void*, HRESULT) override {}
+	void STDMETHODCALLTYPE OnBufferEnd(void* context) override
+	{
+		_owner.OnSlotDone(*static_cast<size_t*>(context));
+	}
+
+private:
+	XboxAudio& _owner;
+};
+
 XboxAudio::XboxAudio(Emulator* emu) : _emu(emu)
 {
+	for(size_t i = 0; i < kSlots; i++) {
+		_slotIds[i] = i;
+	}
+	_callback = new Callback(*this);
 	_emu->GetSoundMixer()->RegisterAudioDevice(this);
 }
 
 XboxAudio::~XboxAudio()
 {
 	_emu->GetSoundMixer()->RegisterAudioDevice(nullptr);
-	SDL_AudioStream* stream = _stream.exchange(nullptr);
-	std::lock_guard lock(_lock);
-	if(stream) {
-		SDL_DestroyAudioStream(stream);
+	{
+		std::lock_guard lock(_lock);
+		Release();
 	}
+	delete _callback;
 }
 
-namespace {
-
-// The Saturn app gives SDL a callback: SDL calls it when the device wants more sound. Mesen pushes its sound with
-// SDL_PutAudioStreamData instead, so there is nothing to do here.
-void SDLCALL AudioCallback(void*, SDL_AudioStream*, int, int) {}
-
-} // namespace
-
-void XboxAudio::OpenDeviceInBackground()
+void XboxAudio::Release()
 {
-	_state = "opening the Xbox sound device";
-	uwp::Log("Opening the Xbox sound device (on its own thread)");
-	SDL_SetHint(SDL_HINT_AUDIO_DEVICE_SAMPLE_FRAMES, "512");
-	std::thread([] {
-		auto start = SDL_GetTicks();
-		SDL_AudioSpec spec{};
-		spec.format = SDL_AUDIO_S16;
-		spec.channels = 2;
-		spec.freq = 48000;
-		SDL_AudioStream* stream = SDL_OpenAudioDeviceStream(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &spec, &AudioCallback, nullptr);
-		if(!stream) {
-			_state = "no sound device (games play silently)";
-			uwp::Log(std::string("[!] Could not open the sound device: ") + SDL_GetError());
-			return;
-		}
-		_state = "starting the sound device";
-		SDL_ResumeAudioStreamDevice(stream);
-		_stream = stream;
-		_state = "sound on";
-		uwp::Log("Sound device open after " + std::to_string(SDL_GetTicks() - start) + " ms");
-	}).detach();
+	if(_voice) {
+		_voice->Stop(0);
+		_voice->FlushSourceBuffers();
+		_voice->DestroyVoice();
+		_voice = nullptr;
+	}
+	if(_master) {
+		_master->DestroyVoice();
+		_master = nullptr;
+	}
+	if(_engine) {
+		_engine->Release();
+		_engine = nullptr;
+	}
+	for(auto& busy : _busy) {
+		busy = false;
+	}
+	_queuedFrames = 0;
+	_started = false;
+}
+
+bool XboxAudio::OpenDevice()
+{
+	std::lock_guard lock(_lock);
+	_state = "starting XAudio2";
+	if(FAILED(XAudio2Create(&_engine, 0, XAUDIO2_DEFAULT_PROCESSOR)) || !_engine) {
+		_engine = nullptr;
+		_state = "no sound (XAudio2 would not start)";
+		uwp::Log("[!] XAudio2Create failed");
+		return false;
+	}
+	if(FAILED(_engine->CreateMasteringVoice(&_master, 2, _sampleRate, 0, nullptr, nullptr, AudioCategory_GameEffects)) || !_master) {
+		_master = nullptr;
+		Release();
+		_state = "no sound (no speakers found)";
+		uwp::Log("[!] XAudio2 CreateMasteringVoice failed");
+		return false;
+	}
+	WAVEFORMATEX format{};
+	format.wFormatTag = WAVE_FORMAT_PCM;
+	format.nChannels = 2;
+	format.nSamplesPerSec = _sampleRate;
+	format.wBitsPerSample = 16;
+	format.nBlockAlign = 4;
+	format.nAvgBytesPerSec = _sampleRate * 4;
+	// Allow up to 4x the base rate so Mesen's small speed adjustments and other rates can be followed
+	if(FAILED(_engine->CreateSourceVoice(&_voice, &format, 0, 4.0f, _callback)) || !_voice) {
+		_voice = nullptr;
+		Release();
+		_state = "no sound (could not make a voice)";
+		uwp::Log("[!] XAudio2 CreateSourceVoice failed");
+		return false;
+	}
+	_state = "sound on (XAudio2)";
+	uwp::Log("Sound on (XAudio2, 48000 Hz stereo)");
+	return true;
+}
+
+void XboxAudio::OnSlotDone(size_t slot)
+{
+	_queuedFrames -= _slotFrames[slot];
+	_busy[slot] = false;
 }
 
 void XboxAudio::PlayBuffer(int16_t* soundBuffer, uint32_t sampleCount, uint32_t sampleRate, bool isStereo)
 {
 	_bufferCount++;
-	HD8_EMU("sending sound to the Xbox (SDL audio)");
-	if(!_stream) {
-		HD8_EMU("sound skipped (sound device not open yet)");
+	std::lock_guard lock(_lock);
+	if(!_voice || sampleCount == 0) {
 		return;
 	}
-	std::lock_guard lock(_lock);
-	if(sampleRate != _sampleRate || isStereo != _isStereo) {
-		// Only the stream's input format changes; the device itself is not touched from this thread
-		SDL_AudioSpec spec{};
-		spec.format = SDL_AUDIO_S16;
-		spec.channels = isStereo ? 2 : 1;
-		spec.freq = (int)sampleRate;
-		SDL_SetAudioStreamFormat(_stream, &spec, nullptr);
-		_sampleRate = sampleRate;
-		_isStereo = isStereo;
+	if(sampleRate != _sampleRate && sampleRate > 0) {
+		_voice->SetFrequencyRatio((float)sampleRate / (float)_sampleRate);
 	}
-
-	const int bytesPerFrame = 2 * (isStereo ? 2 : 1);
-	const uint32_t latencyMs = _emu->GetSettings()->GetAudioConfig().AudioLatency;
-	const int targetBytes = (int)((uint64_t)sampleRate * latencyMs / 1000) * bytesPerFrame;
 
 	// Too far behind (e.g. after a long menu pause): drop the backlog instead of playing late sound
-	if(SDL_GetAudioStreamQueued(_stream) > targetBytes * 4) {
-		SDL_ClearAudioStream(_stream);
+	const uint32_t latencyMs = _emu->GetSettings()->GetAudioConfig().AudioLatency;
+	const uint32_t targetFrames = sampleRate * latencyMs / 1000;
+	if(_queuedFrames > targetFrames * 4) {
+		_voice->FlushSourceBuffers();
 	}
-	SDL_PutAudioStreamData(_stream, soundBuffer, (int)(sampleCount * bytesPerFrame));
-	HD8_EMU("sound sent");
+
+	size_t slot = _next;
+	if(_busy[slot]) {
+		_dropped++;
+		return; // every slot is still playing: skip this bit rather than make the game wait
+	}
+	_next = (_next + 1) % kSlots;
+
+	auto& data = _slots[slot];
+	if(isStereo) {
+		data.assign(soundBuffer, soundBuffer + sampleCount * 2);
+	} else {
+		data.resize(sampleCount * 2);
+		for(uint32_t i = 0; i < sampleCount; i++) {
+			data[i * 2] = data[i * 2 + 1] = soundBuffer[i];
+		}
+	}
+	_slotFrames[slot] = sampleCount;
+	_busy[slot] = true;
+	_queuedFrames += sampleCount;
+
+	XAUDIO2_BUFFER buffer{};
+	buffer.AudioBytes = (UINT32)(data.size() * sizeof(int16_t));
+	buffer.pAudioData = reinterpret_cast<const BYTE*>(data.data());
+	buffer.pContext = &_slotIds[slot];
+	if(FAILED(_voice->SubmitSourceBuffer(&buffer))) {
+		_busy[slot] = false;
+		_queuedFrames -= sampleCount;
+		return;
+	}
+	if(!_started && _queuedFrames >= targetFrames / 2) {
+		_voice->Start(0);
+		_started = true;
+	}
 }
 
 void XboxAudio::Stop()
 {
 	std::lock_guard lock(_lock);
-	if(_stream) {
-		SDL_ClearAudioStream(_stream);
+	if(_voice) {
+		_voice->Stop(0);
+		_voice->FlushSourceBuffers();
+		_started = false;
 	}
 }
 
 void XboxAudio::Pause()
 {
-	// Nothing to do: the queued sound runs out and the device plays silence until Mesen sends more
+	std::lock_guard lock(_lock);
+	if(_voice) {
+		_voice->Stop(0);
+		_started = false;
+	}
 }
 
 void XboxAudio::ProcessEndOfFrame()
 {
 	std::lock_guard lock(_lock);
-	if(!_stream || _sampleRate == 0) {
+	if(!_voice) {
 		return;
 	}
-	const int bytesPerFrame = 2 * (_isStereo ? 2 : 1);
-	int queued = SDL_GetAudioStreamQueued(_stream);
-	double latencyMs = (double)queued / bytesPerFrame * 1000.0 / _sampleRate;
-	if(queued == 0) {
+	double latencyMs = (double)_queuedFrames * 1000.0 / _sampleRate;
+	if(_started && _queuedFrames == 0) {
 		_underruns++;
 	}
 	// Smoothed, like Mesen's own sound managers: the mixer nudges its sample rate to keep this near the target
@@ -125,6 +209,6 @@ AudioStatistics XboxAudio::GetStatistics()
 	AudioStatistics stats;
 	stats.AverageLatency = _averageLatency;
 	stats.BufferUnderrunEventCount = _underruns;
-	stats.BufferSize = _stream ? (uint32_t)SDL_GetAudioStreamQueued(_stream) : 0;
+	stats.BufferSize = _queuedFrames * 4;
 	return stats;
 }

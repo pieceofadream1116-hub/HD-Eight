@@ -119,7 +119,7 @@ private:
 	std::chrono::steady_clock::time_point _playStart;
 	uint64_t _framesAtStart = 0;
 	bool _warnedNoPicture = false;
-	bool _showInfo = true;
+	bool _showInfo = false;   // the info box still shows by itself while a game loads or has no picture
 	size_t _mesenLogLines = 0;
 	std::chrono::steady_clock::time_point _lastLogPoll;
 	std::vector<std::string> _lastSession;   // the previous run's log, shown when it ended with a problem

@@ -78,7 +78,7 @@ add_executable(HDEight WIN32
     "${imgui_SOURCE_DIR}/backends/imgui_impl_sdlrenderer3.cpp"
 )
 target_include_directories(HDEight PRIVATE src "${imgui_SOURCE_DIR}" "${imgui_SOURCE_DIR}/backends")
-target_link_libraries(HDEight PRIVATE mesen_core SDL3::SDL3)
+target_link_libraries(HDEight PRIVATE mesen_core SDL3::SDL3 xaudio2)
 set_target_properties(HDEight PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
 target_compile_options(HDEight PRIVATE /utf-8 /MP /W3 /wd4996 /EHsc)
 # 16 MB stacks for every thread (Mesen's threads use the default), and a map file to look up crash spots

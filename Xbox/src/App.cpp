@@ -256,8 +256,6 @@ bool App::Init()
 		return false;
 	}
 	_sdlRenderer = SDL_CreateRenderer(_window, nullptr);
-	// Sound next, before Mesen and the menus start (same order as the Saturn app)
-	XboxAudio::OpenDeviceInBackground();
 	if(!_sdlRenderer) {
 		uwp::Log(std::string("SDL_CreateRenderer failed: ") + SDL_GetError());
 		return false;
@@ -306,6 +304,7 @@ bool App::Init()
 	KeyManager::SetSettings(_emu->GetSettings());
 	_video = std::make_unique<XboxRenderer>(_emu.get());
 	_audio = std::make_unique<XboxAudio>(_emu.get());
+	_audio->OpenDevice();
 
 	_input = std::make_unique<XboxInput>(_emu.get());
 	{

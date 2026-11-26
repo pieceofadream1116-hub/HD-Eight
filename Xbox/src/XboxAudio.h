@@ -1,19 +1,23 @@
 #pragma once
-// Plays Mesen's mixed sound through an SDL audio stream.
+// Plays Mesen's mixed sound through XAudio2, the Xbox's own sound system.
 //
-// Opening the Xbox sound device hung both from Mesen's emulation thread (0.1.0.9) and from the screen thread
-// at startup (0.1.0.10 stuck on the splash screen), so it is opened on a thread of its own that nothing waits for.
-// Mesen's thread only pours samples into the stream once it is open.
+// SDL's sound path (WASAPI) cannot be used on Xbox: opening the device waits forever for an activation that the
+// console never delivers (HD Eight 0.1.0.9 to 0.1.0.12, and the Saturn app before it). XAudio2 starts instantly.
+// Each sound buffer from Mesen is copied into one of a few slots and queued on a source voice; when every slot
+// is still playing, the buffer is dropped instead of making the emulator wait.
 
 #include "pch.h"
 #include "Shared/Interfaces/IAudioDevice.h"
 
-#include <SDL3/SDL.h>
-
+#include <array>
 #include <atomic>
 #include <mutex>
+#include <vector>
 
 class Emulator;
+struct IXAudio2;
+struct IXAudio2MasteringVoice;
+struct IXAudio2SourceVoice;
 
 class XboxAudio final : public IAudioDevice
 {
@@ -21,13 +25,11 @@ public:
 	explicit XboxAudio(Emulator* emu);
 	~XboxAudio() override;
 
-	/// Starts opening the Xbox sound device on its own thread, the way the Saturn app does it (callback stream,
-	/// sample-frames hint, right after the renderer is made and before anything else starts).
-	/// Until it is open, Mesen's sound is skipped and games play silently.
-	static void OpenDeviceInBackground();
+	/// Starts XAudio2 (main thread, at startup). Returns false if there is no sound; games then play silently.
+	bool OpenDevice();
 
-	/// What the sound device is doing, for the on-screen info.
-	static const char* State() { return _state; }
+	/// What the sound is doing, for the on-screen info.
+	const char* State() const { return _state; }
 
 	void PlayBuffer(int16_t* soundBuffer, uint32_t sampleCount, uint32_t sampleRate, bool isStereo) override;
 	void Stop() override;
@@ -42,14 +44,34 @@ public:
 	/// How many sound buffers Mesen has sent (for the on-screen info).
 	uint64_t BufferCount() const { return _bufferCount; }
 
+	/// Called from XAudio2's thread when a slot has finished playing.
+	void OnSlotDone(size_t slot);
+
 private:
+	static constexpr size_t kSlots = 8;
+
+	void Release();
+
 	Emulator* _emu;
 	std::mutex _lock;
-	static inline std::atomic<SDL_AudioStream*> _stream = nullptr;
-	static inline std::atomic<const char*> _state = "not started";
-	uint32_t _sampleRate = 48000; // format of the samples Mesen sends (the stream converts to the device format)
-	bool _isStereo = true;
+	IXAudio2* _engine = nullptr;
+	IXAudio2MasteringVoice* _master = nullptr;
+	IXAudio2SourceVoice* _voice = nullptr;
+	class Callback;
+	Callback* _callback = nullptr;
+
+	std::array<std::vector<int16_t>, kSlots> _slots;
+	std::array<std::atomic<bool>, kSlots> _busy{};
+	std::array<uint32_t, kSlots> _slotFrames{};
+	std::array<size_t, kSlots> _slotIds{};
+	std::atomic<uint32_t> _queuedFrames = 0;
+	size_t _next = 0;
+	bool _started = false;
+
+	uint32_t _sampleRate = 48000;
+	std::atomic<const char*> _state = "not started";
 	double _averageLatency = 0;
 	uint32_t _underruns = 0;
+	uint32_t _dropped = 0;
 	std::atomic<uint64_t> _bufferCount = 0;
 };

@@ -1,5 +1,7 @@
 #include "XboxAudio.h"
 
+#include "Shared/HdEightGuard.h"
+
 #include "Shared/Emulator.h"
 #include "Shared/EmuSettings.h"
 #include "Shared/Audio/SoundMixer.h"
@@ -40,6 +42,7 @@ void XboxAudio::Close()
 void XboxAudio::PlayBuffer(int16_t* soundBuffer, uint32_t sampleCount, uint32_t sampleRate, bool isStereo)
 {
 	_bufferCount++;
+	HD8_EMU("sending sound to the Xbox (SDL audio)");
 	std::lock_guard lock(_lock);
 	if(!_stream || sampleRate != _sampleRate || isStereo != _isStereo) {
 		Open(sampleRate, isStereo);
@@ -63,6 +66,7 @@ void XboxAudio::PlayBuffer(int16_t* soundBuffer, uint32_t sampleCount, uint32_t 
 		SDL_ResumeAudioStreamDevice(_stream);
 		_playing = true;
 	}
+	HD8_EMU("sound sent");
 }
 
 void XboxAudio::Stop()

@@ -145,6 +145,7 @@ void VideoDecoder::DecodeFrame(bool forRewind)
 	_lastFrameSize = frameSize;
 	
 	//Rewind manager will take care of sending the correct frame to the video renderer
+	HD8_FILTER("sending the picture to the screen");
 	_emu->GetRewindManager()->SendFrame(convertedFrame, forRewind);
 
 	_frameChanged = false;
@@ -155,6 +156,7 @@ void VideoDecoder::DecodeThread()
 	//This thread will decode the PPU's output (color ID to RGB, intensify r/g/b and produce a HD version of the frame if needed)
 	while(!_stopFlag.load()) {
 		//DecodeFrame returns the final ARGB frame we want to display in the emulator window
+		HD8_FILTER("waiting for a picture from the game");
 		while(!_frameChanged) {
 			_waitForFrame.Wait();
 			if(_stopFlag.load()) {
@@ -162,7 +164,9 @@ void VideoDecoder::DecodeThread()
 			}
 		}
 
+		HD8_FILTER("filtering a picture (HD upscale)");
 		DecodeFrame();
+		HD8_FILTER("picture done");
 	}
 }
 
@@ -186,6 +190,7 @@ void VideoDecoder::UpdateFrame(RenderedFrame frame, bool sync, bool forRewind)
 	}
 
 	if(_frameChanged) {
+		HD8_EMU("waiting for the video filter to finish the last picture");
 		//Last frame isn't done decoding yet - sometimes Signal() introduces a 25-30ms delay
 		while(_frameChanged) {
 			//Spin until decode is done
@@ -193,6 +198,7 @@ void VideoDecoder::UpdateFrame(RenderedFrame frame, bool sync, bool forRewind)
 		//At this point, we are sure that the decode thread is no longer busy
 	}
 
+	HD8_EMU("handing the picture to the video filter");
 	_emu->OnBeforeSendFrame();
 
 	_frame = frame;

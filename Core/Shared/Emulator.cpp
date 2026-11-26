@@ -114,11 +114,13 @@ void Emulator::Run()
 		return;
 	}
 
+	HD8_EMU("waiting for its turn to start (run lock)");
 	while(!_runLock.TryAcquire(50)) {
 		if(_stopFlag) {
 			return;
 		}
 	}
+	HD8_EMU("getting ready for the first frame");
 
 	_stopFlag = false;
 	_isRunAheadFrame = false;
@@ -138,15 +140,23 @@ void Emulator::Run()
 		if(useRunAhead) {
 			RunFrameWithRunAhead();
 		} else {
+			HD8_EMU("running the game (inside a frame)");
 			_console->RunFrame();
+			HD8_EMU("after the frame (rewind and history)");
 			_rewindManager->ProcessEndOfFrame();
 			_historyViewer->ProcessEndOfFrame();
 			ProcessSystemActions();
 		}
+#ifdef HDEIGHT_UWP
+		hdeight::emuFrames++;
+#endif
 
+		HD8_EMU("auto save state check");
 		ProcessAutoSaveState();
 
+		HD8_EMU("letting the menu take a turn (WaitForLock)");
 		WaitForLock();
+		HD8_EMU("between frames");
 
 		if(_pauseOnNextFrame) {
 			_pauseOnNextFrame = false;
@@ -154,9 +164,11 @@ void Emulator::Run()
 		}
 
 		if(_paused && !_stopFlag && !_debugger) {
+			HD8_EMU("paused");
 			WaitForPauseEnd();
 		}
 	}
+	HD8_EMU("stopped");
 
 	_emulationThreadId = thread::id();
 
@@ -251,6 +263,7 @@ void Emulator::OnBeforeSendFrame()
 void Emulator::ProcessEndOfFrame()
 {
 	if(!_isRunAheadFrame) {
+		HD8_EMU("waiting for the next frame (speed limit)");
 		_frameLimiter->ProcessFrame();
 		while(_frameLimiter->WaitForNextFrame()) {
 			if(_stopFlag || _frameDelay != GetFrameDelay() || _paused || _pauseOnNextFrame || _lockCounter > 0) {
@@ -265,7 +278,9 @@ void Emulator::ProcessEndOfFrame()
 			_frameLimiter->SetDelay(_frameDelay);
 		}
 
+		HD8_EMU("end of frame (controllers)");
 		_console->GetControlManager()->ProcessEndOfFrame();
+		HD8_EMU("running the game (inside a frame)");
 	}
 	_frameRunning = false;
 }

@@ -232,7 +232,9 @@ bool App::Init()
 			if((reports == 0 && stuck > 3) || (reports == 1 && stuck > 15)) {
 				reports++;
 				uwp::LogUrgent(std::string("[!] The screen has been stuck for ") + std::to_string((int)stuck) +
-					" seconds while " + g_uiMarker.load() + ". Game loader: " + g_workerMarker.load());
+					" seconds while " + g_uiMarker.load() + ". Game loader: " + g_workerMarker.load() +
+					". Mesen: " + hdeight::emuMarker.load() + ". Video filter: " + hdeight::filterMarker.load() +
+					". Frames run: " + std::to_string(hdeight::emuFrames.load()));
 			}
 		}
 	}).detach();
@@ -657,6 +659,17 @@ void App::LoadOnWorker(GameEntry game)
 		}
 		g_workerMarker = "LoadRom finished";
 		_loadOk = ok;
+		if(ok) {
+			// Done here, not on the screen thread: turning cheats on waits for Mesen to finish a frame
+			SetStep("Turning on Game Genie codes");
+			g_workerMarker = "turning on cheats (waits for Mesen to finish a frame)";
+			_loadSha1 = Upper(_emu->GetHash(HashType::Sha1Cheat));
+			_loadCheats = GameCheats{};
+			_loadCheats.Load(_profile / "Cheats" / (_loadSha1 + ".txt"));
+			_cheats = _loadCheats;
+			ApplyCheats();
+			g_workerMarker = "done";
+		}
 		if(!_loadOk) {
 			_loadError = "Mesen could not start this game (it may not be an NES game, or the file is damaged).";
 		}
@@ -683,11 +696,9 @@ void App::FinishLoad()
 	}
 	SetStep("Game started, waiting for the first picture");
 	_currentGame = _loadGame;
-	_currentSha1 = Upper(_emu->GetHash(HashType::Sha1Cheat));
+	_currentSha1 = _loadSha1;
 	uwp::Log("Game SHA-1: " + _currentSha1);
-	_cheats = GameCheats{};
-	_cheats.Load(_profile / "Cheats" / (_currentSha1 + ".txt"));
-	ApplyCheats();
+	_cheats = _loadCheats;
 	_hasFrame = false;
 	_screen = Screen::Playing;
 	_menuOpen = false;
@@ -728,12 +739,16 @@ void App::ForwardMesenLog()
 	if(_loading && !_warnedSlowLoad && now - _loadStart > std::chrono::seconds(10)) {
 		_warnedSlowLoad = true;
 		std::lock_guard lock(_stepLock);
-		uwp::Log("[!] Still loading after 10 seconds, stuck at: " + _step);
+		uwp::Log("[!] Still loading after 10 seconds, stuck at: " + _step + ". Loader: " + g_workerMarker.load() +
+			". Mesen: " + hdeight::emuMarker.load() + ". Video filter: " + hdeight::filterMarker.load() +
+			". Frames run: " + std::to_string(hdeight::emuFrames.load()) + ". Sounds: " + std::to_string(_audio->BufferCount()));
 	}
 	if(_screen == Screen::Playing && !_menuOpen && !_warnedNoPicture && now - _playStart > std::chrono::seconds(5) &&
 		_video->FrameCount() == _framesAtStart) {
 		_warnedNoPicture = true;
-		uwp::Log("[!] The game is running but no picture arrived after 5 seconds");
+		uwp::Log(std::string("[!] The game is running but no picture arrived after 5 seconds. Mesen: ") +
+			hdeight::emuMarker.load() + ". Video filter: " + hdeight::filterMarker.load() + ". Frames run: " +
+			std::to_string(hdeight::emuFrames.load()) + ". Sounds: " + std::to_string(_audio->BufferCount()));
 	}
 	if(_screen == Screen::Playing && _hasFrame) {
 		std::lock_guard lock(_stepLock);
@@ -1203,8 +1218,14 @@ void App::DrawInfo()
 		ImGui::Text("%s  %s", spinner[tick], _screen == Screen::Playing ? _currentGame.title.c_str() : "HD Eight");
 	}
 	ImGui::TextWrapped("Now: %s (%.0f s)", step.c_str(), stepSeconds);
-	ImGui::Text("Pictures: %llu   Sounds: %llu   Controller reads: %llu", (unsigned long long)_video->FrameCount(),
+	ImGui::Text("Frames run: %llu   Pictures: %llu   Sounds: %llu   Controller reads: %llu",
+		(unsigned long long)hdeight::emuFrames.load(), (unsigned long long)_video->FrameCount(),
 		(unsigned long long)_audio->BufferCount(), (unsigned long long)_input->ReadCount());
+	ImGui::TextWrapped("Mesen: %s", hdeight::emuMarker.load());
+	ImGui::TextWrapped("Video filter: %s", hdeight::filterMarker.load());
+	if(_loading) {
+		ImGui::TextWrapped("Loader: %s", g_workerMarker.load());
+	}
 
 	if(big) {
 		ImGui::Separator();

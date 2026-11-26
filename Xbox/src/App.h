@@ -109,6 +109,8 @@ private:
 	bool _loadOk = false;
 	std::string _loadError;
 	GameEntry _loadGame;
+	std::string _loadSha1;
+	GameCheats _loadCheats;
 	std::mutex _stepLock;
 	std::string _step;
 	std::chrono::steady_clock::time_point _stepTime;

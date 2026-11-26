@@ -4,6 +4,9 @@
 // its UWP version is written in C++/CX. These do the same job with _wfopen and std::filesystem, which work on the
 // Xbox's USB drives thanks to the broadFileSystemAccess capability (the same way HD Eight opens its games).
 
+#define NOMINMAX
+#include <windows.h>
+
 #include <vfs/vfs.h>
 #include <vfs/vfs_implementation.h>
 

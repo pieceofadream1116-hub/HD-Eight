@@ -13,6 +13,7 @@
 #include <imgui_impl_sdlrenderer3.h>
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <cstring>
 #include <fstream>
@@ -774,8 +775,50 @@ static void Title(const char* text)
 	ImGui::Separator();
 }
 
+// The moving backdrop behind the game list: a deep blue gradient with soft lights drifting slowly across it and a
+// faint band of light sweeping by now and then (the same look as EMU's game list)
+static void DrawMovingBackground()
+{
+	ImDrawList* dl = ImGui::GetBackgroundDrawList();
+	const ImVec2 size = ImGui::GetMainViewport()->Size;
+	const float t = (float)ImGui::GetTime();
+	dl->AddRectFilledMultiColor(ImVec2(0, 0), size, IM_COL32(12, 30, 78, 255), IM_COL32(8, 22, 62, 255),
+		IM_COL32(2, 7, 24, 255), IM_COL32(4, 12, 36, 255));
+
+	struct Light
+	{
+		float periodX, periodY, phase, radius;
+		int r, g, b;
+	};
+	static const Light lights[] = {
+		{47.0f, 31.0f, 0.0f, 0.55f, 40, 110, 230},
+		{61.0f, 43.0f, 2.1f, 0.45f, 20, 70, 200},
+		{37.0f, 53.0f, 4.2f, 0.38f, 70, 140, 255},
+	};
+	constexpr float kTau = 6.2831853f;
+	const float extent = std::max(size.x, size.y);
+	for(const Light& light : lights) {
+		ImVec2 centre(size.x * (0.5f + 0.42f * std::sin(t * kTau / light.periodX + light.phase)),
+			size.y * (0.5f + 0.38f * std::cos(t * kTau / light.periodY + light.phase * 1.3f)));
+		const int rings = 14;
+		for(int i = rings; i >= 1; i--) {
+			dl->AddCircleFilled(centre, extent * light.radius * i / rings, IM_COL32(light.r, light.g, light.b, 6), 48);
+		}
+	}
+
+	const float sweep = std::fmod(t / 14.0f, 1.0f);
+	const float x = -size.x * 0.4f + sweep * size.x * 1.8f;
+	const float width = size.x * 0.18f;
+	const ImU32 clear = IM_COL32(120, 170, 255, 0);
+	const ImU32 glow = IM_COL32(120, 170, 255, 13);
+	dl->AddRectFilledMultiColor(ImVec2(x, 0), ImVec2(x + width, size.y), clear, glow, glow, clear);
+	dl->AddRectFilledMultiColor(ImVec2(x + width, 0), ImVec2(x + width * 2, size.y), glow, clear, clear, glow);
+}
+
 void App::DrawLibrary()
 {
+	DrawMovingBackground();
+	ImGui::SetNextWindowBgAlpha(0.0f); // let the backdrop show through
 	BeginFullScreen("Library", _focusNext);
 	Title("GENESIS   (version " APP_VERSION ")");
 	DrawLastSession();

@@ -245,4 +245,25 @@ void PickFolder(std::function<void(std::string)> callback)
 	PickFolderAsync(std::move(callback));
 }
 
+std::vector<std::filesystem::path> EsDeFolders(std::initializer_list<const char*> systems)
+{
+	std::vector<std::filesystem::path> folders;
+	for(char drive = 'D'; drive <= 'Z'; drive++) {
+		const std::filesystem::path root = std::string{drive} + ":\\";
+		for(const char* top : {"ES-DE\\ROMs", "ROMs"}) {
+			for(const char* system : systems) {
+				std::filesystem::path folder = root / top / system;
+				std::error_code ec;
+				if(std::filesystem::is_directory(folder, ec)) {
+					folders.push_back(folder);
+				}
+			}
+		}
+	}
+	for(const auto& folder : folders) {
+		Log("ES-DE games folder: " + folder.string());
+	}
+	return folders;
+}
+
 } // namespace uwp

@@ -276,7 +276,11 @@ bool App::Init()
 	_knownCheats = std::make_unique<KnownCheats>(_profile / "Cheats" / "Known");
 	uwp::Log("Genesis Plus GX is ready");
 
+	// The profile's Games folder, your ES-DE folders, then the folder picked with "Choose games folder"
 	std::vector<fs::path> folders{_profile / "Games"};
+	for(const fs::path& folder : uwp::EsDeFolders({"genesis", "megadrive", "mastersystem", "gamegear", "segacd", "megacd", "sg-1000"})) {
+		folders.push_back(folder);
+	}
 	if(!_settings.gamesFolder.empty()) {
 		folders.push_back(FromU8(_settings.gamesFolder));
 	}
@@ -384,7 +388,12 @@ int App::Run()
 				if(!_pickedFolder.empty()) {
 					_settings.gamesFolder = _pickedFolder;
 					_settings.Save();
-					_games = ScanGames({_profile / "Games", FromU8(_pickedFolder)});
+					std::vector<fs::path> folders{_profile / "Games"};
+					for(const fs::path& folder : uwp::EsDeFolders({"genesis", "megadrive", "mastersystem", "gamegear", "segacd", "megacd", "sg-1000"})) {
+						folders.push_back(folder);
+					}
+					folders.push_back(FromU8(_pickedFolder));
+					_games = ScanGames(folders);
 					Toast("Found " + std::to_string(_games.size()) + " games");
 				}
 			}

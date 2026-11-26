@@ -143,7 +143,11 @@ static int os_execute (lua_State *L) {
   const char *cmd = luaL_optstring(L, 1, NULL);
   int stat;
   errno = 0;
+#if defined(HDEIGHT_UWP)
+  stat = -1;  /* no shell in a UWP app */
+#else
   stat = system(cmd);
+#endif
   if (cmd != NULL)
     return luaL_execresult(L, stat);
   else {

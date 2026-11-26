@@ -53,7 +53,9 @@
 
 
 #if defined(LUA_USE_WINDOWS)
+#if !defined(HDEIGHT_UWP)	/* UWP apps cannot load DLLs by path (HD Eight's Xbox build) */
 #define LUA_DL_DLL	/* enable support for DLL */
+#endif
 #define LUA_USE_C89	/* broadly, Windows is C89 */
 #endif
 

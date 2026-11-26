@@ -1,7 +1,7 @@
 #include "pch.h"
 #include "UPnPPortMapper.h"
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(HDEIGHT_UWP)
 #include <winsock2.h>
 #include <natupnp.h>
 #include <ws2tcpip.h>

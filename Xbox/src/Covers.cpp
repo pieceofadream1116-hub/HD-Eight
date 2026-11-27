@@ -187,7 +187,7 @@ std::optional<std::string> WikipediaDescription(Windows::Web::Http::HttpClient& 
 	return quote == std::string::npos ? std::string{} : ReadJsonString(*body, quote);
 }
 
-bool Decode(const std::string& bytes, std::vector<uint8_t>& rgba, int& width, int& height)
+bool Decode(const std::string& bytes, std::vector<uint8_t>& rgba, int& width, int& height, uint32_t maxEdge = kMaxEdge)
 {
 	try {
 		InMemoryRandomAccessStream stream;
@@ -203,7 +203,7 @@ bool Decode(const std::string& bytes, std::vector<uint8_t>& rgba, int& width, in
 		if(w == 0 || h == 0) {
 			return false;
 		}
-		double scale = std::min(1.0, (double)kMaxEdge / std::max(w, h));
+		double scale = std::min(1.0, (double)maxEdge / std::max(w, h));
 		BitmapTransform transform;
 		transform.ScaledWidth(std::max(1u, (uint32_t)(w * scale)));
 		transform.ScaledHeight(std::max(1u, (uint32_t)(h * scale)));
@@ -251,6 +251,11 @@ std::string SafeFileName(std::string name)
 }
 
 } // namespace
+
+bool DecodeImage(const std::string& bytes, std::vector<uint8_t>& rgba, int& width, int& height, uint32_t maxEdge)
+{
+	return Decode(bytes, rgba, width, height, maxEdge);
+}
 
 Covers::Covers(fs::path folder) : _folder(std::move(folder))
 {

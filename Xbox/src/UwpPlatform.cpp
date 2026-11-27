@@ -238,7 +238,34 @@ fire_and_forget PickFolderAsync(std::function<void(std::string)> callback)
 	callback(result);
 }
 
+fire_and_forget PickPictureAsync(std::function<void(std::string)> callback)
+{
+	std::string result;
+	try {
+		FileOpenPicker picker;
+		picker.ViewMode(PickerViewMode::Thumbnail);
+		try {
+			picker.SuggestedStartLocation(PickerLocationId::ComputerFolder);
+		} catch(...) {
+		}
+		for(const wchar_t* ext : {L".jpg", L".jpeg", L".png", L".bmp"}) {
+			picker.FileTypeFilter().Append(ext);
+		}
+		if(auto file = co_await picker.PickSingleFileAsync()) {
+			result = to_string(file.Path());
+		}
+	} catch(...) {
+		result.clear();
+	}
+	callback(result);
+}
+
 } // namespace
+
+void PickPicture(std::function<void(std::string)> callback)
+{
+	PickPictureAsync(std::move(callback));
+}
 
 void PickFolder(std::function<void(std::string)> callback)
 {

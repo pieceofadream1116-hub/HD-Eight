@@ -57,6 +57,10 @@ private:
 	void UploadFrame();
 	void DrawGame();
 	void DrawLibrary();
+	void DrawBackground();
+	void LoadBackground();
+	void FreeBackground();
+	void UseBackgroundPicture(const std::filesystem::path& picked);
 	void DrawMenu();
 	void DrawMenuMain();
 	void DrawPictureOptions();
@@ -134,4 +138,15 @@ private:
 	std::mutex _pickLock;
 	std::string _pickedFolder;
 	bool _pickDone = false;
+	std::string _pickedPicture;
+	bool _pictureDone = false;
+
+	// The player's own background picture: decoded on _bgThread, made into _bgTexture on the UI thread
+	std::thread _bgThread;
+	std::mutex _bgLock;
+	std::vector<uint8_t> _bgPixels;
+	int _bgPixW = 0, _bgPixH = 0;
+	bool _bgReady = false;
+	SDL_Texture* _bgTexture = nullptr;
+	int _bgTexW = 0, _bgTexH = 0;
 };

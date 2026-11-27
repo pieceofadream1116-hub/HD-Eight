@@ -27,6 +27,8 @@
 #include <cmath>
 #include <atomic>
 #include <cstring>
+#include <iterator>
+#include <cctype>
 #include <fstream>
 #include <system_error>
 
@@ -360,6 +362,7 @@ bool App::Init()
 	_games = ScanGames(folders);
 	uwp::Log("Games found: " + std::to_string(_games.size()));
 	_covers = std::make_unique<Covers>(_profile / "Covers");
+	LoadBackground();
 	return true;
 }
 
@@ -486,7 +489,11 @@ int App::Run()
 					Toast("Found " + std::to_string(_games.size()) + " games");
 				}
 			}
-		}
+			if(_pictureDone) {
+				_pictureDone = false;
+				if(!_pickedPicture.empty()) {
+					UseBackgroundPicture(FromU8(_pickedPicture));
+				}
 
 		Mark("reading the controllers");
 		_input->Poll();
@@ -564,6 +571,10 @@ void App::Shutdown()
 		ImGui::DestroyContext();
 	}
 	_covers.reset();
+	if(_bgThread.joinable()) {
+		_bgThread.join();
+	}
+	FreeBackground();
 	if(_gameTexture) {
 		SDL_DestroyTexture(_gameTexture);
 		_gameTexture = nullptr;
@@ -943,9 +954,104 @@ static void DrawMovingBackground()
 	dl->AddRectFilledMultiColor(ImVec2(x + width, 0), ImVec2(x + width * 2, size.y), glow, clear, clear, glow);
 }
 
+// The player's own picture: copied into the profile folder (so it stays even if the original is moved), then decoded
+// on a thread of its own
+void App::UseBackgroundPicture(const fs::path& picked)
+{
+	std::error_code ec;
+	std::string ext = picked.extension().string();
+	std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char ch) { return (char)std::tolower(ch); });
+	for(const char* old : {".jpg", ".jpeg", ".png", ".bmp"}) {
+		fs::remove(_profile / (std::string("Background") + old), ec);
+	}
+	fs::path copy = _profile / ("Background" + ext);
+	if(!fs::copy_file(picked, copy, fs::copy_options::overwrite_existing, ec)) {
+		uwp::Log("Could not copy the background picture " + U8(picked) + ": " + ec.message());
+		copy = picked; // use it where it is
+	}
+	_settings.backgroundPicture = U8(copy);
+	_settings.Save();
+	LoadBackground();
+	Toast("Your background picture is on");
+}
+
+void App::LoadBackground()
+{
+	FreeBackground();
+	if(_settings.backgroundPicture.empty()) {
+		return;
+	}
+	if(_bgThread.joinable()) {
+		_bgThread.join();
+	}
+	fs::path file = FromU8(_settings.backgroundPicture);
+	_bgThread = std::thread([this, file] {
+		uwp::InitThreadForWinRT();
+		std::ifstream in(file, std::ios::binary);
+		std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+		std::vector<uint8_t> rgba;
+		int w = 0, h = 0;
+		bool ok = !bytes.empty() && DecodeImage(bytes, rgba, w, h, 2560);
+		if(!ok) {
+			uwp::Log("Could not read the background picture " + U8(file));
+		}
+		std::lock_guard lock(_bgLock);
+		_bgPixels = ok ? std::move(rgba) : std::vector<uint8_t>{};
+		_bgPixW = w;
+		_bgPixH = h;
+		_bgReady = ok;
+	});
+}
+
+void App::FreeBackground()
+{
+	if(_bgTexture) {
+		SDL_DestroyTexture(_bgTexture);
+		_bgTexture = nullptr;
+	}
+	std::lock_guard lock(_bgLock);
+	_bgReady = false;
+	_bgPixels.clear();
+}
+
+// Behind the game list: the player's own picture (filling the screen, darkened a little so the text stays easy to
+// read), or the moving blue backdrop
+void App::DrawBackground()
+{
+	{
+		std::lock_guard lock(_bgLock);
+		if(_bgReady) {
+			_bgReady = false;
+			if(_bgTexture) {
+				SDL_DestroyTexture(_bgTexture);
+			}
+			_bgTexture = SDL_CreateTexture(_sdlRenderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, _bgPixW, _bgPixH);
+			if(_bgTexture) {
+				SDL_UpdateTexture(_bgTexture, nullptr, _bgPixels.data(), _bgPixW * 4);
+				SDL_SetTextureScaleMode(_bgTexture, SDL_SCALEMODE_LINEAR);
+				_bgTexW = _bgPixW;
+				_bgTexH = _bgPixH;
+			}
+			_bgPixels.clear();
+		}
+	}
+	if(!_bgTexture || _bgTexW <= 0 || _bgTexH <= 0) {
+		DrawMovingBackground();
+		return;
+	}
+	ImDrawList* dl = ImGui::GetBackgroundDrawList();
+	const ImVec2 size = ImGui::GetMainViewport()->Size;
+	// Fill the screen, keeping the picture's shape (the edges that do not fit are cut off)
+	const float scale = std::max(size.x / _bgTexW, size.y / _bgTexH);
+	const float w = _bgTexW * scale, h = _bgTexH * scale;
+	const ImVec2 min((size.x - w) * 0.5f, (size.y - h) * 0.5f);
+	dl->AddImage((ImTextureID)(intptr_t)_bgTexture, min, ImVec2(min.x + w, min.y + h));
+	dl->AddRectFilled(ImVec2(0, 0), size, IM_COL32(0, 0, 0, 120));
+}
+
 void App::DrawLibrary()
 {
-	DrawMovingBackground();
+	DrawBackground();
 	ImGui::SetNextWindowBgAlpha(0.0f); // let the backdrop show through
 	BeginFullScreen("Library", _focusNext);
 	Title("HD EIGHT   (version " HDEIGHT_VERSION ")");
@@ -961,6 +1067,22 @@ void App::DrawLibrary()
 	if(ImGui::CollapsingHeader("Picture and sound")) {
 		DrawPictureOptions();
 		DrawSoundOptions();
+	}
+	if(ImGui::CollapsingHeader("Background")) {
+		if(BigButton("Choose my own background picture")) {
+			uwp::PickPicture([this](std::string file) {
+				std::lock_guard lock(_pickLock);
+				_pickedPicture = std::move(file);
+				_pictureDone = true;
+			});
+		}
+		ImGui::TextDisabled("A .jpg or .png picture from your drive");
+		if(!_settings.backgroundPicture.empty() && BigButton("Use the moving blue background")) {
+			_settings.backgroundPicture.clear();
+			_settings.Save();
+			FreeBackground();
+			Toast("Moving blue background is back");
+		}
 	}
 
 	if(_games.empty()) {

@@ -45,6 +45,8 @@ struct AppSettings
 	int volume = 100;                        // 0-100
 	int uiScale = 100;
 
+	std::string backgroundPicture;           // the player's own picture behind the game list (empty: the moving blue one)
+
 	/// Xbox button (pad::Button number) for each NES button, in the order of kNesButtonNames.
 	/// Default: Xbox A = NES B and Xbox B = NES A (same layout as the real pad), X/Y = turbo, View = Select, Menu = Start.
 	static constexpr int kButtonCount = 6;

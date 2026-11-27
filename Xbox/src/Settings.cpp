@@ -65,6 +65,8 @@ void AppSettings::Load(const std::filesystem::path& file)
 		};
 		if(key == "gamesFolder") {
 			gamesFolder = value;
+		} else if(key == "backgroundPicture") {
+			backgroundPicture = value;
 		} else if(key == "picture") {
 			picture = (PictureStyle)std::clamp(toInt((int)picture), 0, (int)PictureStyle::Count - 1);
 		} else if(key == "shape") {
@@ -97,6 +99,7 @@ void AppSettings::Save() const
 	}
 	std::ofstream out(_file, std::ios::trunc);
 	out << "gamesFolder=" << gamesFolder << "\n";
+	out << "backgroundPicture=" << backgroundPicture << "\n";
 	out << "picture=" << (int)picture << "\n";
 	out << "shape=" << (int)shape << "\n";
 	out << "scanlines=" << scanlines << "\n";

@@ -55,7 +55,9 @@ std::optional<WikiResult> WikipediaLookup(Windows::Web::Http::HttpClient& client
 	return result;
 }
 
-bool Decode(const std::string& bytes, std::vector<uint8_t>& rgba, int& width, int& height)
+} // namespace
+
+bool DecodeImage(const std::string& bytes, std::vector<uint8_t>& rgba, int& width, int& height, uint32_t maxEdge)
 {
 	try {
 		InMemoryRandomAccessStream stream;
@@ -71,7 +73,7 @@ bool Decode(const std::string& bytes, std::vector<uint8_t>& rgba, int& width, in
 		if(w == 0 || h == 0) {
 			return false;
 		}
-		double scale = std::min(1.0, (double)kMaxEdge / std::max(w, h));
+		double scale = std::min(1.0, (double)maxEdge / std::max(w, h));
 		BitmapTransform transform;
 		transform.ScaledWidth(std::max(1u, (uint32_t)(w * scale)));
 		transform.ScaledHeight(std::max(1u, (uint32_t)(h * scale)));
@@ -90,8 +92,6 @@ bool Decode(const std::string& bytes, std::vector<uint8_t>& rgba, int& width, in
 		return false;
 	}
 }
-
-} // namespace
 
 Covers::Covers(fs::path folder) : _folder(std::move(folder))
 {
@@ -332,7 +332,7 @@ void Covers::Fetch(const GameEntry& game)
 		}
 	}
 	if(image) {
-		Decode(*image, result.rgba, result.width, result.height);
+		DecodeImage(*image, result.rgba, result.width, result.height, kMaxEdge);
 	}
 	result.coverDone = true;
 	{

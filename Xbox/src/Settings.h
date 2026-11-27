@@ -41,6 +41,8 @@ struct AppSettings
 	int volume = 100;                        // 0-100
 	int uiScale = 100;                       // text size in percent (100 = big, made for a TV)
 
+	std::string backgroundPicture;           // the player's own picture behind the game list (empty: the moving blue one)
+
 	/// Xbox button (pad::Button number) for each Genesis button, in the order of kPadButtonNames.
 	/// Default: the bottom row X A B = Genesis A B C, the top row LB Y RB = X Y Z, Menu = Start, View = Mode.
 	static constexpr int kButtonCount = 8;

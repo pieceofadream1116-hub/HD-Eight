@@ -46,6 +46,9 @@ void UseFullCoreWindowBounds();
 /// Must be called from the UI thread; the callback may run on another thread.
 void PickFolder(std::function<void(std::string)> callback);
 
+/// Shows the system file picker for a picture (.jpg, .png, .bmp). Same rules as PickFolder.
+void PickPicture(std::function<void(std::string)> callback);
+
 /// ES-DE's game folders for these systems ("genesis", "segacd"...) on any drive: <drive>:\ES-DE\ROMs\<system>
 /// (or <drive>:\ROMs\<system>). Only folders that exist are returned.
 std::vector<std::filesystem::path> EsDeFolders(std::initializer_list<const char*> systems);

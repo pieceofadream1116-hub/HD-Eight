@@ -20,6 +20,10 @@
 #include <unordered_map>
 #include <vector>
 
+/// Decodes a PNG, JPEG or BMP file's bytes to RGBA pixels, made smaller if an edge is longer than maxEdge.
+/// Blocks: call it on a worker thread (multi-threaded apartment), never the UI thread.
+bool DecodeImage(const std::string& bytes, std::vector<uint8_t>& rgba, int& width, int& height, uint32_t maxEdge);
+
 class Covers
 {
 public:

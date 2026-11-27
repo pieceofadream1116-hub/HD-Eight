@@ -494,6 +494,8 @@ int App::Run()
 				if(!_pickedPicture.empty()) {
 					UseBackgroundPicture(FromU8(_pickedPicture));
 				}
+			}
+		}
 
 		Mark("reading the controllers");
 		_input->Poll();
